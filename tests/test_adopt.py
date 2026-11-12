@@ -19,7 +19,7 @@ OWNER = "ExampleOwner"
 CLONE = "old-widget"  # current name; the inventory target is "widget"
 ISSUE_URL = f"https://github.com/{OWNER}/{CLONE}/issues/42"
 PR_URL = f"https://github.com/{OWNER}/{CLONE}/pull/43"
-ANSWERS = "_commit: v1.1.0\n_src_path: {src}\nrepo_name: widget\nskeleton: {skeleton}\n"
+ANSWERS = "_commit: v1.1.1\n_src_path: {src}\nrepo_name: widget\nskeleton: {skeleton}\n"
 
 # The regex of .github/actions/branch-name/check.sh, re-implemented.
 TYPES = "feat|fix|docs|refactor|test|ci|chore|perf|build"
@@ -100,7 +100,7 @@ def adopt(
     args: dict[str, Any] = {
         "stack": "python",
         "template": "gh:ExampleOwner/template-repo",
-        "vcs_ref": "v1.1.0",
+        "vcs_ref": "v1.1.1",
         "execute": True,
         "render_only": False,
     }
@@ -278,7 +278,7 @@ def test_answers_from_inventory(std: Standard, inv: dict[str, InventoryEntry], t
         "skeleton=false",
     } <= answers
     assert f"repo_name={CLONE}" not in answers
-    assert copier[copier.index("--vcs-ref") + 1] == "v1.1.0"
+    assert copier[copier.index("--vcs-ref") + 1] == "v1.1.1"
     assert "--defaults" in copier
     assert "--overwrite" not in copier
     assert {"has_release=false", f"year={datetime.date.today().year}"} <= answers
@@ -437,7 +437,7 @@ def test_template_ref_defaults_to_the_pinned_tag(
         execute=True,
     )
     copier = cmd.find("copier")
-    assert copier[copier.index("--vcs-ref") + 1] == TEMPLATE_REF == "v1.1.0"
+    assert copier[copier.index("--vcs-ref") + 1] == TEMPLATE_REF == "v1.1.1"
 
 
 def test_readme_only_excluded_when_it_exists(
