@@ -23,7 +23,7 @@ statuses: [concept, wip, active, archived]
 
 profiles:
   active:
-    required_files: [README.md, LICENSE, AGENTS.md]
+    required_files: [README.md, LICENSE, AGENTS.md, .claude/settings.json]
   archived:
     required_files: [README.md]
   exempt:

@@ -38,7 +38,7 @@ def test_kinds(real_std: Standard):
 
 
 def test_required_files(real_std: Standard):
-    assert "AGENTS.md" in real_std.required_files["active"]
+    assert {"AGENTS.md", ".claude/settings.json"} <= set(real_std.required_files["active"])
 
 
 def test_inventory_size(real_inv: dict[str, InventoryEntry]):

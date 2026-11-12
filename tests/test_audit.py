@@ -28,7 +28,7 @@ def good_state(**overrides: Any) -> RepoState:
         delete_branch_on_merge=True,
         default_branch="main",
         license_spdx="MIT",
-        files=frozenset({"README.md", "LICENSE", "AGENTS.md"}),
+        files=frozenset({"README.md", "LICENSE", "AGENTS.md", ".claude/settings.json"}),
         readme="# ai-helper\n",
         ci_conclusion="success",
         labels=("Type: Bug", "type: docs", "extra"),
@@ -120,7 +120,11 @@ def test_files_required(std: Standard, inv: dict[str, InventoryEntry]):
     state = good_state(files=frozenset({"README.md"}))
     findings = [f for f in audit_repo(state, inv["ai-helper"], std) if f.check == "files.required"]
     assert {f.severity for f in findings} == {"error"}
-    assert sorted(f.message for f in findings) == ["missing AGENTS.md", "missing LICENSE"]
+    assert sorted(f.message for f in findings) == [
+        "missing .claude/settings.json",
+        "missing AGENTS.md",
+        "missing LICENSE",
+    ]
 
 
 def test_settings_merge(std: Standard, inv: dict[str, InventoryEntry]):
