@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from jts_ops.gh import Gh, GhError, fetch_state, list_repos
-from jts_ops.state import RepoState
+from jts_ops.state import LabelInfo, RepoState
 
 FIXTURES = Path(__file__).parent / "fixtures" / "gh"
 
@@ -74,6 +74,11 @@ def test_fetch_state_full():
         readme="# Example Repo\n\nA repo that exists only in tests.\n",
         ci_conclusion="success",
         labels=("bug", "type: feat", "status: wip"),
+        label_details=(
+            LabelInfo("bug", "d73a4a", "Something isn't working"),
+            LabelInfo("type: feat", "a2eeef", "New feature"),
+            LabelInfo("status: wip", "fbca04", "Work in progress"),
+        ),
     )
     assert state.files is not None
     assert "AGENTS.md" in state.files

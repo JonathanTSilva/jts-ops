@@ -3,6 +3,13 @@
 from dataclasses import dataclass
 
 
+@dataclass(frozen=True)
+class LabelInfo:
+    name: str
+    color: str
+    description: str
+
+
 @dataclass
 class RepoState:
     name: str
@@ -23,3 +30,6 @@ class RepoState:
     readme: str | None
     ci_conclusion: str | None
     labels: tuple[str, ...]
+    # Optional extras read by `apply`; the defaults mean "not fetched".
+    label_details: tuple[LabelInfo, ...] = ()
+    squash_merge_commit_title: str | None = None

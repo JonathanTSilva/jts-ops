@@ -4,10 +4,12 @@ import base64
 import json
 import re
 import subprocess
+import tempfile
 from collections.abc import Callable, Collection, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
-from jts_ops.state import RepoState
+from jts_ops.state import LabelInfo, RepoState
 
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
@@ -51,11 +53,13 @@ class Gh:
         method: str = "GET",
         fields: Mapping[str, Any] | None = None,
         paginate: bool = False,
+        body: Any = None,
     ) -> Any:
         """Call the GitHub API and return decoded JSON (None for an empty body).
 
         With `paginate`, pages are fetched with `--slurp` and list pages are flattened
-        into one list.
+        into one list. `body` is sent as a JSON request body (`gh api --input`), for
+        payloads the `-f/-F` field flags cannot express.
         """
         args = ["api", "-H", "Accept: application/vnd.github+json", "--method", method]
         if paginate:
@@ -63,7 +67,13 @@ class Gh:
         if fields:
             args += _field_args(fields)
         args.append(path)
-        result = self._runner(args)
+        if body is None:
+            result = self._runner(args)
+        else:
+            with tempfile.TemporaryDirectory() as tmp:
+                body_file = Path(tmp) / "body.json"
+                body_file.write_text(json.dumps(body), encoding="utf-8")
+                result = self._runner([*args, "--input", str(body_file)])
         if result.returncode != 0:
             message = result.stderr.strip()
             match = _STATUS.search(message)
@@ -128,7 +138,12 @@ def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
     runs: list[dict[str, Any]] = runs_json["workflow_runs"] if runs_json else []
     ci_conclusion: str | None = runs[0]["conclusion"] if runs else None
 
-    labels = tuple(label["name"] for label in gh.api(f"{base}/labels", paginate=True))
+    label_rows: list[dict[str, Any]] = gh.api(f"{base}/labels", paginate=True)
+    labels = tuple(label["name"] for label in label_rows)
+    label_details = tuple(
+        LabelInfo(label["name"], label["color"], label.get("description") or "")
+        for label in label_rows
+    )
     license_info = repo.get("license")
 
     return RepoState(
@@ -149,4 +164,6 @@ def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
         readme=readme,
         ci_conclusion=ci_conclusion,
         labels=labels,
+        label_details=label_details,
+        squash_merge_commit_title=repo.get("squash_merge_commit_title"),
     )
