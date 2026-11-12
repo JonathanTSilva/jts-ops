@@ -1,0 +1,40 @@
+[project]
+name = "jts-ops"
+version = "0.1.0"
+description = "Audit, apply and sync the GitHub standard across all of Jonathan's repos"
+authors = [
+    { name = "Jonathan Tobias", email = "jonathantosilva@hotmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+jts-ops = "jts_ops.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+    "types-pyyaml>=6.0.12.20261111",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

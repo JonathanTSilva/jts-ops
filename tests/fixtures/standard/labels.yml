@@ -1,0 +1,7 @@
+- name: "type: bug"
+  color: "d22d48"
+  description: "Something is broken"
+
+- name: "type: docs"
+  color: "0075ca"
+  description: "Documentation only"

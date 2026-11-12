@@ -1,0 +1,10 @@
+- name: "hidden-notes"
+  target: "hidden-notes"
+  kind: product
+  visibility: private
+  fate: keep
+  profile: exempt
+  license: proprietary
+  status: active
+  featured: false
+  description: "Example private repo"

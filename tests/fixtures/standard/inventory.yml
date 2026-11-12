@@ -1,0 +1,32 @@
+- name: "ExampleOwner"
+  target: "ExampleOwner"
+  kind: special
+  visibility: public
+  fate: keep
+  profile: special
+  license: mit
+  status: active
+  featured: false
+  description: "Example profile README"
+
+- name: "old-widget"
+  target: "widget"
+  kind: product
+  visibility: public
+  fate: rebuild
+  profile: active
+  license: mit
+  status: wip
+  featured: true
+  description: "Example product that gets renamed"
+
+- name: "ai-helper"
+  target: "ai-helper"
+  kind: ai
+  visibility: public
+  fate: keep
+  profile: active
+  license: mit
+  status: active
+  featured: false
+  description: "Example AI helper"

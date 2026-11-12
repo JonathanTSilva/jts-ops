@@ -1,0 +1,34 @@
+# Invented fixture data for unit tests. Not the real standard.
+version: 1
+owner: ExampleOwner
+author: Example Author
+contact_email: author@example.invalid
+plan: free
+
+name_pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+special_names:
+  - ExampleOwner
+  - exampleowner.github.io
+  - .github
+
+kinds:
+  - { id: product, prefix: null, suffix: null, emoji: "P", topic: kind-product }
+  - { id: ai, prefix: "ai-", suffix: null, emoji: "A", topic: kind-ai }
+  - { id: research, prefix: "research-", suffix: null, emoji: "R", topic: kind-research }
+  - { id: learn, prefix: "learn-", suffix: null, emoji: "L", topic: kind-learn }
+  - { id: action, prefix: null, suffix: "-action", emoji: "X", topic: kind-action }
+  - { id: special, prefix: null, suffix: null, emoji: "S", topic: kind-special }
+
+statuses: [concept, wip, active, archived]
+
+profiles:
+  active:
+    required_files: [README.md, LICENSE, AGENTS.md]
+  archived:
+    required_files: [README.md]
+  exempt:
+    required_files: []
+  special:
+    required_files: []
+
+licenses: [mit, proprietary]

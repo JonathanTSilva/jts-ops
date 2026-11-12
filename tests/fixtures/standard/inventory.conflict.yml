@@ -1,0 +1,21 @@
+- name: "widget-clone"
+  target: "widget-clone"
+  kind: product
+  visibility: private
+  fate: keep
+  profile: exempt
+  license: proprietary
+  status: active
+  featured: false
+  description: "Placeholder"
+
+- name: "ai-helper"
+  target: "ai-helper"
+  kind: ai
+  visibility: private
+  fate: keep
+  profile: exempt
+  license: proprietary
+  status: active
+  featured: false
+  description: "Duplicates a public name"
