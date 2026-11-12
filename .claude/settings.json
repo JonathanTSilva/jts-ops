@@ -1,9 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git status*)",
-      "Bash(git diff*)",
-      "Bash(git log*)",
+      "Bash(git status)",
+      "Bash(git diff)",
+      "Bash(git diff --stat)",
+      "Bash(git diff --staged)",
+      "Bash(git log --oneline -20)",
       "Bash(uv sync*)",
       "Bash(uv run pytest*)",
       "Bash(uv run ruff*)",
@@ -18,7 +20,10 @@
       "Bash(git log*--output*)",
       "Bash(git show*--output*)",
       "Bash(git*--ext-diff*)",
-      "Bash(git -c*)"
+      "Bash(git -c*)",
+      "Bash(git*--o*)",
+      "Bash(git*--ext*)",
+      "Bash(git*--no-index*)"
     ]
   }
 }
