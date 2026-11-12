@@ -11,6 +11,17 @@ from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.gh import Gh, GhError, fetch_state, list_repos
 from jts_ops.inventory import InventoryEntry, load_inventory
+from jts_ops.new import (
+    DEFAULT_TEMPLATE,
+    LICENSES,
+    STACKS,
+    STATUSES,
+    VISIBILITIES,
+    Cmd,
+    NewRepoError,
+    default_cmd,
+    new_repo,
+)
 from jts_ops.standard import Standard, load_standard
 from jts_ops.state import RepoState
 
@@ -52,6 +63,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply.add_argument(
         "--execute", action="store_true", help="make the changes; without it nothing is written"
+    )
+
+    new = commands.add_parser(
+        "new",
+        help="create a compliant repo: render the template, lock, commit, create on GitHub, "
+        "apply (dry run unless --execute)",
+    )
+    new.add_argument("name", help="repository name")
+    new.add_argument("--kind", required=True, help="kind from the standard (for example product)")
+    new.add_argument("--stack", required=True, choices=STACKS)
+    new.add_argument("--visibility", required=True, choices=VISIBILITIES)
+    new.add_argument(
+        "--license", required=True, choices=LICENSES, help="company licenses are never set here"
+    )
+    new.add_argument("--description", required=True, help="one-line description")
+    new.add_argument("--status", default="wip", choices=STATUSES)
+    new.add_argument("--release", action="store_true", help="cut releases with release-please")
+    new.add_argument("--standard-dir", type=Path, default=None, help=standard_dir_help)
+    new.add_argument(
+        "--projects-dir", type=Path, default=Path("~/Projects"), help="parent of the new repo dir"
+    )
+    new.add_argument(
+        "--template", default=DEFAULT_TEMPLATE, help="Copier template (git URL or local path)"
+    )
+    new.add_argument("--vcs-ref", default=None, help="template git ref (for example HEAD)")
+    new.add_argument(
+        "--render-only",
+        action="store_true",
+        help="stop after the first local commit, before creating the GitHub repo",
+    )
+    new.add_argument(
+        "--execute", action="store_true", help="do it; without it only the steps are listed"
     )
     return parser
 
@@ -149,10 +192,17 @@ def _codeql_state(gh: Gh, repo: str) -> str:
     return str(setup.get("state", "not-configured"))
 
 
-def run_apply(args: argparse.Namespace, gh: Gh | None = None) -> int:
+def run_apply(
+    args: argparse.Namespace,
+    gh: Gh | None = None,
+    extra_entries: Sequence[InventoryEntry] = (),
+) -> int:
+    """Apply the standard. `extra_entries` stand in for repos not yet in an inventory file."""
     standard_dir: Path = args.standard_dir or default_standard_dir()
     std = load_standard(standard_dir)
     inventory = load_inventory(standard_dir)
+    for extra in extra_entries:
+        inventory.setdefault(extra.name, extra)
     gh = gh or Gh(std.owner)
     gh.read_only = not args.execute  # a dry run cannot write, whatever the code path
     only: set[str] | None = set(args.repo) if args.repo else None
@@ -212,9 +262,49 @@ def run_apply(args: argparse.Namespace, gh: Gh | None = None) -> int:
     return 1 if failed else 0
 
 
-def main(argv: Sequence[str] | None = None, gh: Gh | None = None) -> int:
+def run_new(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
+    standard_dir: Path = args.standard_dir or default_standard_dir()
+    std = load_standard(standard_dir)
+    gh = gh or Gh(std.owner)
+
+    def apply(entry: InventoryEntry) -> int:
+        namespace = argparse.Namespace(standard_dir=standard_dir, repo=[entry.name], execute=True)
+        return run_apply(namespace, gh, [entry])
+
+    try:
+        new_repo(
+            args.name,
+            kind=args.kind,
+            stack=args.stack,
+            visibility=args.visibility,
+            license=args.license,
+            description=args.description,
+            std=std,
+            gh=gh,
+            projects_dir=args.projects_dir.expanduser(),
+            template=args.template,
+            execute=args.execute,
+            status=args.status,
+            has_release=args.release,
+            vcs_ref=args.vcs_ref,
+            render_only=args.render_only,
+            run=run,
+            apply=apply,
+            on_step=lambda step: print(f"  {step}"),
+        )
+    except NewRepoError as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 2
+    if not args.execute:
+        print("dry run: nothing was run or written (pass --execute to do it)")
+    return 0
+
+
+def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
     """Entry point for the `jts-ops` console script."""
     args = build_parser().parse_args(argv)
+    if args.command == "new":
+        return run_new(args, gh, run)
     if args.command == "audit":
         return run_audit(args, gh)
     if args.command == "apply":
