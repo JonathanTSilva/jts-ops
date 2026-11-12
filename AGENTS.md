@@ -16,7 +16,7 @@ jts-ops: 🧠 CLI that audits and applies the GitHub standard across all reposit
 
 | Module | Does |
 |---|---|
-| `cli.py` | argparse entry point: `audit`, `apply`, `new`, `migrate`; prints, writes reports, sets exit codes |
+| `cli.py` | argparse entry point: `audit`, `apply`, `new`, `migrate`, `adopt`; prints, writes reports, sets exit codes |
 | `standard.py` | Loads `standard.yml` and `labels.yml` into a `Standard` |
 | `inventory.py` | Merges the public `inventory.yml` with the optional private inventory |
 | `naming.py` | Repo name validation against the standard |
@@ -26,13 +26,14 @@ jts-ops: 🧠 CLI that audits and applies the GitHub standard across all reposit
 | `apply.py` | `plan_changes` (pure) and `execute` (writes) for settings, topics, descriptions, labels and security |
 | `migrate.py` | `plan_migration` (pure) and `execute_migration` for the irreversible rename, archive and local-move steps, plus the banner and license loaders |
 | `new.py` | The `new` flow: render the template, lock, commit, create the repo, apply |
+| `adopt.py` | The `adopt` flow: render the template onto an existing clone (skeleton off, README and any license kept), then issue, branch, commit, push and PR |
 
 ## Rules
 
 - `Gh` is read-only unless `--execute` is passed. Never bypass `read_only` or call a write endpoint from a dry-run path.
 - Tests never hit the network. They use the invented fixtures in `tests/fixtures/` and fake runners, never the real `gh`, GitHub or private inventory (the real-data tests skip when those are absent).
 - Never name a private repository in code, tests, fixtures, docs or commit messages: this repository is public. Use invented names.
-- Never run `apply` or `new` with `--execute` against the real account while developing.
+- Never run `apply`, `new` or `adopt` with `--execute` against the real account while developing.
 
 ## Setup
 

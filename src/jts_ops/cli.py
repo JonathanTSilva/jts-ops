@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from jts_ops.adopt import AdoptError, adopt_repo
 from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.gh import Gh, GhError, fetch_state, list_repos
@@ -105,6 +106,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop after the first local commit, before creating the GitHub repo",
     )
     new.add_argument(
+        "--execute", action="store_true", help="do it; without it only the steps are listed"
+    )
+    adopt = commands.add_parser(
+        "adopt",
+        help="render the template onto an existing repo's clone and open a PR "
+        "(dry run unless --execute)",
+    )
+    adopt.add_argument("name", help="the repo's current name, as in the inventory")
+    adopt.add_argument("--stack", required=True, choices=STACKS)
+    adopt.add_argument("--standard-dir", type=Path, default=None, help=standard_dir_help)
+    adopt.add_argument(
+        "--projects-dir", type=Path, default=Path("~/Projects"), help="where local clones live"
+    )
+    adopt.add_argument(
+        "--template", default=DEFAULT_TEMPLATE, help="Copier template (git URL or local path)"
+    )
+    adopt.add_argument("--vcs-ref", default=None, help="template git ref (for example v1.1.0)")
+    adopt.add_argument(
+        "--render-only",
+        action="store_true",
+        help="run only the local steps (precheck, scratch branch, copier), leaving the changes "
+        "uncommitted: no issue, no commit, no push; needs no --execute",
+    )
+    adopt.add_argument(
         "--execute", action="store_true", help="do it; without it only the steps are listed"
     )
     migrate = commands.add_parser(
@@ -441,11 +466,42 @@ def run_new(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_c
     return 0
 
 
+def run_adopt(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
+    standard_dir: Path = args.standard_dir or default_standard_dir()
+    std = load_standard(standard_dir)
+    inventory = load_inventory(standard_dir)
+    # Real runs may write to GitHub (issue, PR); a dry run or a render-only run never does.
+    gh = gh or Gh(std.owner, read_only=not args.execute or args.render_only)
+    try:
+        adopt_repo(
+            args.name,
+            stack=args.stack,
+            std=std,
+            inv=inventory,
+            gh=gh,
+            cmd=run,
+            projects_dir=args.projects_dir.expanduser(),
+            template=args.template,
+            vcs_ref=args.vcs_ref,
+            execute=args.execute,
+            render_only=args.render_only,
+            on_step=lambda step: print(f"  {step}"),
+        )
+    except AdoptError as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 2
+    if not (args.execute or args.render_only):
+        print("dry run: nothing was run or written (pass --execute to do it)")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
     """Entry point for the `jts-ops` console script."""
     args = build_parser().parse_args(argv)
     if args.command == "new":
         return run_new(args, gh, run)
+    if args.command == "adopt":
+        return run_adopt(args, gh, run)
     if args.command == "audit":
         return run_audit(args, gh)
     if args.command == "apply":
