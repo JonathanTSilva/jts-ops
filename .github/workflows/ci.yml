@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  hygiene:
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
+    uses: JonathanTSilva/.github/.github/workflows/pr-hygiene.yml@v1
+
+  docs:
+    permissions:
+      contents: read
+    uses: JonathanTSilva/.github/.github/workflows/lint-docs.yml@v1
+
+  security:
+    # GitHub checks caller permissions statically, so all of them are granted
+    # even when the job is skipped or runs with public: false.
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      id-token: write
+      security-events: write
+    uses: JonathanTSilva/.github/.github/workflows/security.yml@v1
+    with:
+      public: true
+
+  python:
+    permissions:
+      contents: read
+    uses: JonathanTSilva/.github/.github/workflows/python.yml@v1
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+      attestations: write
+    uses: JonathanTSilva/.github/.github/workflows/release.yml@v1
+    secrets:
+      token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+  # The one check the repository ruleset requires. Skipped jobs are fine.
+  ci:
+    name: ci
+    if: always()
+    needs:
+      - hygiene
+      - docs
+      - security
+      - python
+      - release
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

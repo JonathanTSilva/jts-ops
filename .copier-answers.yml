@@ -1,0 +1,14 @@
+# Changes here will be overwritten by Copier. Re-sync with `copier update`.
+_commit: 2a9876e
+_src_path: gh:JonathanTSilva/template-repo
+description: 🧠 Audit, apply and sync the GitHub standard across all of Jonathan's
+    repos
+has_release: true
+kind: jts
+license: mit
+repo_name: jts-ops
+stack: python
+status: wip
+visibility: public
+year: 2026
+

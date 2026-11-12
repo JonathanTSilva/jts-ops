@@ -1,0 +1,19 @@
+{
+  "name": "jts-ops",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.13"
+    }
+  },
+  "postCreateCommand": "pipx install uv && pipx install pre-commit && uv sync && pre-commit install --install-hooks",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "editorconfig.editorconfig",
+        "charliermarsh.ruff"
+      ]
+    }
+  }
+}
