@@ -5,6 +5,7 @@ what would change plus the reasons something was left alone. `execute` performs 
 Nothing here renames, archives, changes visibility or deletes anything.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import quote
@@ -131,6 +132,15 @@ def _ruleset_current(existing: dict[str, Any]) -> bool:
     )
 
 
+def merged_topics(current: Iterable[str], entry: InventoryEntry, std: Standard) -> set[str]:
+    """Keep every topic except stale kind-/status- ones, then add the entry's two."""
+    kind = std.kinds.get(entry.kind)
+    topics = {t for t in current if not t.startswith(("kind-", "status-"))}
+    topics.add(kind.topic if kind else f"kind-{entry.kind}")
+    topics.add(f"status-{entry.status}")
+    return topics
+
+
 def _diff(current: dict[str, Any], wanted: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in wanted.items() if current.get(k) != v}
 
@@ -246,10 +256,7 @@ def plan_changes(
             )
 
     # Topics: keep everything except stale kind-/status- topics, add the right two.
-    kind = std.kinds.get(entry.kind)
-    wanted_topics = {t for t in state.topics if not t.startswith(("kind-", "status-"))}
-    wanted_topics.add(kind.topic if kind else f"kind-{entry.kind}")
-    wanted_topics.add(f"status-{entry.status}")
+    wanted_topics = merged_topics(state.topics, entry, std)
     if wanted_topics != set(state.topics):
         added = sorted(wanted_topics - set(state.topics))
         removed = sorted(set(state.topics) - wanted_topics)

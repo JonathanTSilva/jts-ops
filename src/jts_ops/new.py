@@ -41,7 +41,7 @@ class NewRepoError(Exception):
     """The new-repo flow stopped; the message says why."""
 
 
-def _is_local(template: str) -> bool:
+def is_local_template(template: str) -> bool:
     return "://" not in template and not template.startswith(("gh:", "gl:", "git@", "git+"))
 
 
@@ -72,11 +72,11 @@ def _validate(
     return problems
 
 
-def _copier_command() -> list[str]:
+def copier_command() -> list[str]:
     return shlex.split(os.environ.get(COPIER_ENV, "")) or ["copier"]
 
 
-def _rewrite_src_path(dst: Path) -> None:
+def rewrite_src_path(dst: Path) -> None:
     """Point `_src_path` at the canonical template so `copier update` works later."""
     answers = dst / ".copier-answers.yml"
     text = answers.read_text(encoding="utf-8")
@@ -155,7 +155,7 @@ def new_repo(
         "has_release": "true" if has_release else "false",
         "year": str(year),
     }
-    copier = [*_copier_command(), "copy", "--defaults"]
+    copier = [*copier_command(), "copy", "--defaults"]
     for key, value in answers.items():
         copier += ["--data", f"{key}={value}"]
     if vcs_ref:
@@ -180,7 +180,7 @@ def new_repo(
         return action
 
     def rewrite() -> None:
-        _rewrite_src_path(dst)
+        rewrite_src_path(dst)
 
     def apply_step() -> None:
         assert apply is not None
@@ -207,7 +207,7 @@ def new_repo(
     plan: list[tuple[str, Callable[[], None]]] = [
         (f"copier copy {template} -> {dst}", sh(copier, None, "copier copy"))
     ]
-    if _is_local(template):
+    if is_local_template(template):
         plan.append((f"rewrite _src_path in .copier-answers.yml to {DEFAULT_TEMPLATE}", rewrite))
     if lock:
         plan.append((" ".join(lock), sh(lock, dst, " ".join(lock))))
