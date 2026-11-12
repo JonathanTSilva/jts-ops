@@ -141,8 +141,14 @@ def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
         else None
     )
 
-    # 403/404: Actions disabled or not visible; there is simply no CI signal.
-    runs_json = _or_none_on({403, 404}, gh, f"{base}/actions/runs?branch={branch}&per_page=1")
+    # The CI signal is the latest completed run of ci.yml on the default branch, so other
+    # workflows (and runs still in progress) never mask it. 403/404: Actions disabled or not
+    # visible, or the repo has no ci.yml; there is simply no CI signal.
+    runs_json = _or_none_on(
+        {403, 404},
+        gh,
+        f"{base}/actions/workflows/ci.yml/runs?branch={branch}&status=completed&per_page=1",
+    )
     runs: list[dict[str, Any]] = runs_json["workflow_runs"] if runs_json else []
     ci_conclusion: str | None = runs[0]["conclusion"] if runs else None
 

@@ -42,7 +42,7 @@ class FakeGithub:
             return ok({"tree": [{"path": "README.md", "type": "blob"}]})
         if path.endswith("/readme"):
             return ok({"encoding": "base64", "content": "IyBoaQo="})
-        if "/actions/runs" in path:
+        if "/actions/workflows/ci.yml/runs" in path:
             return ok({"workflow_runs": []})
         if path.endswith("/labels"):
             no_labels: list[object] = []

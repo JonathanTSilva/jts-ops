@@ -586,7 +586,7 @@ class CliGithub:
         if path.endswith("/readme"):
             content = base64.b64encode(b"# hi\n").decode()
             return ok({"encoding": "base64", "content": content, "sha": "s", "path": "README.md"})
-        if "/actions/runs" in path:
+        if "/actions/workflows/ci.yml/runs" in path:
             return ok({"workflow_runs": []})
         if path.endswith("/labels"):
             no_labels: list[object] = []
