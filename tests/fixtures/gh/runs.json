@@ -4,6 +4,7 @@
     {
       "id": 1,
       "name": "CI",
+      "path": ".github/workflows/ci.yml",
       "head_branch": "main",
       "event": "push",
       "status": "completed",

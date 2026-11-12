@@ -44,7 +44,7 @@ def happy_routes() -> dict[str, Route]:
     return {
         "/git/trees/": "tree.json",
         "/readme": "readme.json",
-        "/actions/runs": "runs.json",
+        "/actions/workflows/ci.yml/runs": "runs.json",
         "/labels": "labels.json",
     }
 
@@ -94,7 +94,7 @@ def test_fetch_state_requests_expected_endpoints():
     assert paths == [
         "/repos/ExampleOwner/example-repo/git/trees/main?recursive=1",
         "/repos/ExampleOwner/example-repo/readme",
-        "/repos/ExampleOwner/example-repo/actions/runs?branch=main&per_page=1",
+        "/repos/ExampleOwner/example-repo/actions/workflows/ci.yml/runs?branch=main&status=completed&per_page=1",
         "/repos/ExampleOwner/example-repo/labels",
     ]
     assert "--paginate" in runner.calls[3]
@@ -117,9 +117,9 @@ def test_missing_readme():
     assert state.files is not None
 
 
-def test_no_runs():
+def test_no_completed_ci_runs():
     routes = happy_routes()
-    routes["/actions/runs"] = "runs_empty.json"
+    routes["/actions/workflows/ci.yml/runs"] = "runs_empty.json"
     state = fetch_state(Gh("ExampleOwner", FakeRunner(routes)), repo())
     assert state.ci_conclusion is None
 
@@ -148,8 +148,9 @@ def test_list_shaped_repo_is_completed_from_repo_endpoint():
 
 @pytest.mark.parametrize("status", [403, 404])
 def test_runs_unavailable_gives_no_ci_conclusion(status: int):
+    # 404 also covers a repo with no ci.yml workflow.
     routes = happy_routes()
-    routes["/actions/runs"] = (status, "Actions unavailable")
+    routes["/actions/workflows/ci.yml/runs"] = (status, "Actions unavailable")
     state = fetch_state(Gh("ExampleOwner", FakeRunner(routes)), repo())
     assert state.ci_conclusion is None
 
@@ -184,7 +185,7 @@ def test_license_none_when_repo_has_no_license():
 
 def test_other_errors_raise():
     routes = happy_routes()
-    routes["/actions/runs"] = (500, "Server Error")
+    routes["/actions/workflows/ci.yml/runs"] = (500, "Server Error")
     with pytest.raises(GhError) as info:
         fetch_state(Gh("ExampleOwner", FakeRunner(routes)), repo())
     assert info.value.status == 500
