@@ -7,6 +7,8 @@ updates:
     groups:
       python-dependencies:
         patterns: ["*"]
+    commit-message:
+      prefix: chore(deps)
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -14,6 +16,8 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+    commit-message:
+      prefix: chore(deps)
   - package-ecosystem: devcontainers
     directory: /
     schedule:
@@ -21,3 +25,5 @@ updates:
     groups:
       devcontainers:
         patterns: ["*"]
+    commit-message:
+      prefix: chore(deps)

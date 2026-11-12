@@ -1,8 +1,7 @@
 # Changes here will be overwritten by Copier. Re-sync with `copier update`.
-_commit: 2a9876e
+_commit: 0e2a2f4
 _src_path: gh:JonathanTSilva/template-repo
-description: 🧠 Audit, apply and sync the GitHub standard across all of Jonathan's
-    repos
+description: 🧠 CLI that audits and applies the GitHub standard across all repositories
 has_release: true
 kind: jts
 license: mit

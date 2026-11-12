@@ -49,6 +49,7 @@ jobs:
     uses: JonathanTSilva/.github/.github/workflows/release.yml@v1
     secrets:
       token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
   # The one check the repository ruleset requires. Skipped jobs are fine.
   ci:
     name: ci
