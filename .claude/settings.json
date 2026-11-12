@@ -13,7 +13,12 @@
     "deny": [
       "Read(./.env*)",
       "Bash(git push --force*)",
-      "Bash(git push -f*)"
+      "Bash(git push -f*)",
+      "Bash(git diff*--output*)",
+      "Bash(git log*--output*)",
+      "Bash(git show*--output*)",
+      "Bash(git*--ext-diff*)",
+      "Bash(git -c*)"
     ]
   }
 }
