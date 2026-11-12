@@ -1,0 +1,27 @@
+[
+  [
+    {
+      "id": 1,
+      "name": "bug",
+      "color": "d73a4a",
+      "default": false,
+      "description": "Something isn't working"
+    },
+    {
+      "id": 1,
+      "name": "type: feat",
+      "color": "a2eeef",
+      "default": false,
+      "description": "New feature"
+    }
+  ],
+  [
+    {
+      "id": 1,
+      "name": "status: wip",
+      "color": "fbca04",
+      "default": false,
+      "description": "Work in progress"
+    }
+  ]
+]

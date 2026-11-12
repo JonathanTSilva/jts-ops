@@ -1,0 +1,13 @@
+{
+  "total_count": 1,
+  "workflow_runs": [
+    {
+      "id": 1,
+      "name": "CI",
+      "head_branch": "main",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ]
+}
