@@ -1,5 +1,5 @@
 # Changes here will be overwritten by Copier. Re-sync with `copier update`.
-_commit: 0e2a2f4
+_commit: v1.0.0
 _src_path: gh:JonathanTSilva/template-repo
 description: 🧠 CLI that audits and applies the GitHub standard across all repositories
 has_release: true
