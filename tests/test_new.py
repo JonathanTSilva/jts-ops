@@ -371,6 +371,7 @@ COPIER = os.environ.get("JTS_COPIER") or str(TEMPLATE_DIR / ".venv" / "bin" / "c
     os.environ.get("JTS_NEW_INTEGRATION") != "1",
     reason="opt-in: set JTS_NEW_INTEGRATION=1 (real copier, uv lock and git; no GitHub)",
 )
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 @pytest.mark.parametrize("stack", ["python", "none"])
 def test_integration_render_lock_and_commit_locally(
     std: Standard, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stack: str
@@ -410,5 +411,4 @@ def test_integration_render_lock_and_commit_locally(
         ["git", "log", "--format=%s"], cwd=dst, capture_output=True, text=True, check=True
     )
     assert log.stdout.strip() == "chore: initial commit from template-repo"
-    assert shutil.which("git")
     assert gh_api.paths == []  # render-only never touches GitHub
