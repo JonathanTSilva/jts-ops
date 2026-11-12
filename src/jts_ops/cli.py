@@ -355,7 +355,8 @@ def run_migrate(args: argparse.Namespace, gh: Gh | None = None) -> int:
 
     steps: list[Step] = []
     problems = 0  # repos that could not be planned
-    for listed in listed_repos:
+    # Sorted, so the digest does not depend on the order the API happens to list repos in.
+    for listed in sorted(listed_repos, key=lambda r: str(r["name"])):
         name: str = listed["name"]
         entry = inventory.get(name)
         if entry is None or (only is not None and name not in only):

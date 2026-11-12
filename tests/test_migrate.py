@@ -142,6 +142,43 @@ def test_already_archived_has_no_archive_or_rename_step(std: Standard):
     assert "rename" not in actions(steps)
 
 
+def test_active_repo_gets_no_license_step(std: Standard):
+    entry = make_entry(fate="keep", profile="active", status="active")
+    assert "license" not in actions(plan(std, make_state(), entry))
+
+
+def test_special_repo_gets_license_step(std: Standard):
+    entry = make_entry(name="old-gadget", target="old-gadget", fate="keep", profile="special")
+    assert "license" in actions(plan(std, make_state(), entry))
+
+
+@pytest.mark.parametrize(
+    "files", [{"LICENSE.md"}, {"LICENSE.txt"}, {"COPYING"}], ids=["md", "txt", "copying"]
+)
+def test_other_license_file_names_count(std: Standard, files: set[str]):
+    state = make_state(files=frozenset({"README.md", *files}))
+    assert "license" not in actions(plan(std, state))
+
+
+def test_license_detected_by_github_counts(std: Standard):
+    assert "license" not in actions(plan(std, make_state(license_spdx="MIT")))
+
+
+def test_already_archived_plans_only_local_move(std: Standard):
+    state = make_state(
+        name="gadget", archived=True, readme=None, description="stale", topics=(), has_wiki=True
+    )
+    steps = plan(std, state, make_entry(name="gadget"))
+    assert actions(steps) == ["local-move"]
+    assert steps[0].payload["archived"] is True
+
+
+def test_already_archived_unrenamed_clone_keeps_its_current_name(std: Standard):
+    steps = plan(std, make_state(archived=True))  # still named old-gadget, target gadget
+    assert actions(steps) == ["local-move"]
+    assert steps[0].payload["target"] == "old-gadget"
+
+
 def test_nothing_to_do_gives_no_steps(std: Standard):
     state = make_state(name="gadget", has_wiki=False, files=frozenset({"LICENSE"}))
     entry = make_entry(name="gadget", fate="keep", profile="active", status="active")
@@ -247,6 +284,15 @@ def test_missing_readme_creates_one(std: Standard, tmp_path: Path):
     assert "sha" not in body
     text = base64.b64decode(body["content"]).decode()
     assert text == f"{BANNER}\n\n# gadget\n\nExample gadget\n"
+
+
+def test_large_readme_is_never_overwritten(std: Standard, tmp_path: Path):
+    steps = [s for s in plan(std) if s.action == "banner"]
+    fake = FakeGithub()
+    fake.readme = {"encoding": "none", "content": "", "sha": "abc123", "path": "README.md"}
+    results = run_steps(steps, writable(fake), tmp_path)
+    assert results[0][1] == "README too large to edit via API"
+    assert fake.writes() == []
 
 
 def test_failed_rename_blocks_archive(std: Standard, tmp_path: Path):
@@ -417,6 +463,50 @@ def test_unclean_variants_untouched(tmp_path: Path, break_it: Callable[[Path], o
     assert git(clone, "remote", "get-url", "origin") == before
 
 
+def test_plain_directory_is_not_a_clone(tmp_path: Path):
+    projects = tmp_path / "Projects"
+    (projects / "old-gadget").mkdir(parents=True)
+    error = move(projects)
+    assert error is not None
+    assert "not the root of a git clone" in error
+    assert (projects / "old-gadget").exists()
+
+
+def test_directory_inside_another_repo_is_not_a_clone(tmp_path: Path):
+    projects = tmp_path / "Projects"
+    projects.mkdir()
+    git(projects, "init")  # the folder is only a subdirectory of this repo
+    (projects / "old-gadget").mkdir()
+    error = move(projects)
+    assert error is not None
+    assert "not the root of a git clone" in error
+    assert not (projects / "_archive").exists()
+
+
+def test_clone_without_origin_untouched(tmp_path: Path):
+    projects = tmp_path / "Projects"
+    clone = make_clone(projects, "old-gadget")
+    git(clone, "remote", "remove", "origin")
+    error = move(projects)
+    assert error is not None
+    assert "no origin remote" in error
+    assert clone.exists()
+
+
+def test_detached_wiki_leaves_both_clones_untouched(tmp_path: Path):
+    projects = tmp_path / "Projects"
+    clone = make_clone(projects, "old-gadget")
+    wiki = make_clone(projects, "old-gadget.wiki")
+    git(wiki, "checkout", "--detach")
+    before = git(clone, "remote", "get-url", "origin")
+    error = move(projects)
+    assert error is not None
+    assert "detached HEAD" in error
+    assert clone.exists()
+    assert wiki.exists()
+    assert git(clone, "remote", "get-url", "origin") == before
+
+
 def test_local_move_refuses_existing_destination(tmp_path: Path):
     projects = tmp_path / "Projects"
     make_clone(projects, "old-gadget")
@@ -572,6 +662,17 @@ def test_dry_run_read_only(dirs: dict[str, Path], capsys: pytest.CaptureFixture[
     out = capsys.readouterr().out
     assert "old-gadget" in out
     assert data["digest"] in out
+
+
+def test_digest_does_not_depend_on_api_order(dirs: dict[str, Path]):
+    first, second = dirs["tmp"] / "a.json", dirs["tmp"] / "b.json"
+    one = CliGithub([cli_repo("old-gadget"), cli_repo("tidy-tool")])  # tidy-tool: wiki on
+    two = CliGithub([cli_repo("tidy-tool"), cli_repo("old-gadget")])
+    assert main(migrate_args(dirs, "--plan-out", str(first)), Gh(OWNER, one)) == 0
+    assert main(migrate_args(dirs, "--plan-out", str(second)), Gh(OWNER, two)) == 0
+    plan_a = json.loads(first.read_text(encoding="utf-8"))
+    assert {s["repo"] for s in plan_a["steps"]} == {"old-gadget", "tidy-tool"}
+    assert plan_a == json.loads(second.read_text(encoding="utf-8"))
 
 
 def test_unknown_repo_is_exit_2(dirs: dict[str, Path]):

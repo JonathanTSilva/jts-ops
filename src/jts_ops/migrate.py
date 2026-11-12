@@ -38,6 +38,30 @@ class Step:
     payload: dict[str, Any]
 
 
+LICENSE_FILES = frozenset({"LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"})
+
+
+def _needs_license(state: RepoState, entry: InventoryEntry) -> bool:
+    """A public, non-company repo with no license file and no license GitHub detected."""
+    if state.private or entry.license == "company" or state.license_spdx is not None:
+        return False
+    # `files` is None for an empty or truncated tree; then a license file cannot be shown.
+    return state.files is None or not (state.files & LICENSE_FILES)
+
+
+def _local_move_step(state: RepoState, target: str, archived: bool) -> Step:
+    return Step(
+        state.name,
+        "local-move",
+        {
+            "old": state.name,
+            "target": target,
+            "archived": archived,
+            "default_branch": state.default_branch,
+        },
+    )
+
+
 def plan_migration(
     state: RepoState,
     entry: InventoryEntry,
@@ -52,6 +76,11 @@ def plan_migration(
     """
     name = state.name
     archiving = entry.fate in ARCHIVE_FATES
+    if state.archived:
+        # GitHub rejects every write to an archived repo, so only the local clone can move.
+        # The repo cannot be renamed either, so the clone follows the name it has now.
+        move = _local_move_step(state, state.name, archiving)
+        return [move] if archiving else []
     steps: list[Step] = []
 
     if archiving and (state.readme is None or BANNER_START not in state.readme):
@@ -63,9 +92,9 @@ def plan_migration(
             )
         )
 
-    # `files` is None for an empty or truncated tree; then a LICENSE cannot be shown to exist.
-    has_license = state.files is not None and "LICENSE" in state.files
-    if not state.private and entry.license != "company" and not has_license:
+    # Active repos get their LICENSE through the adopt PR: a direct commit to the default
+    # branch would fight the ruleset. Only archive fates and special repos are written here.
+    if (archiving or entry.profile == "special") and _needs_license(state, entry):
         if entry.license not in license_texts:
             raise ValueError(f"no license text for {entry.license!r}")
         steps.append(
@@ -88,22 +117,11 @@ def plan_migration(
     if name != entry.target:
         steps.append(Step(name, "rename", {"target": entry.target}))
 
-    if archiving and not state.archived:
+    if archiving:
         steps.append(Step(name, "archive", {}))
 
     if archiving or name != entry.target:
-        steps.append(
-            Step(
-                name,
-                "local-move",
-                {
-                    "old": name,
-                    "target": entry.target,
-                    "archived": archiving,
-                    "default_branch": state.default_branch,
-                },
-            )
-        )
+        steps.append(_local_move_step(state, entry.target, archiving))
     return steps
 
 
@@ -203,6 +221,9 @@ def _banner(step: Step, gh: Gh, repo: str) -> None:
         text = f"{banner}\n\n# {step.payload['title']}\n\n{step.payload['description']}\n"
         _contents(gh, repo, "README.md", text, "docs: add archive banner", None)
         return
+    if readme.get("encoding") != "base64":
+        # Large files come back without content; writing banner-only would destroy the README.
+        raise GhError("README too large to edit via API")
     current = base64.b64decode(readme["content"]).decode("utf-8")
     path: str = readme.get("path", "README.md")
     _contents(gh, repo, path, f"{banner}\n\n{current}", "docs: add archive banner", readme["sha"])
@@ -216,14 +237,30 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 def _unclean_reasons(clone: Path, default_branch: str | None) -> list[str]:
-    """Why a clone must not be moved: uncommitted work, a side branch, or unpushed commits."""
+    """Why a clone must not be moved.
+
+    Not the root of its own clone, no `origin`, uncommitted work, a side branch (the main clone
+    must be on its default branch, the wiki clone just not detached), or unpushed commits.
+    """
+    top = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=clone,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != clone.resolve():
+        return ["not the root of a git clone"]
     reasons: list[str] = []
+    if "origin" not in _git(clone, "remote").split():
+        reasons.append("no origin remote")
     if _git(clone, "status", "--porcelain"):
         reasons.append("uncommitted changes")
-    if default_branch is not None:
-        branch = _git(clone, "branch", "--show-current")
-        if branch != default_branch:
-            reasons.append(f"on {branch or 'a detached HEAD'}, not {default_branch}")
+    branch = _git(clone, "branch", "--show-current")
+    if default_branch is not None and branch != default_branch:
+        reasons.append(f"on {branch or 'a detached HEAD'}, not {default_branch}")
+    elif default_branch is None and not branch:
+        reasons.append("detached HEAD")
     if int(_git(clone, "rev-list", "--branches", "--not", "--remotes", "--count")) > 0:
         reasons.append("unpushed commits")
     return reasons
@@ -239,15 +276,17 @@ def _local_move(payload: Mapping[str, Any], owner: str, projects_dir: Path) -> N
         if source.is_dir():
             url = f"git@github.com:{owner}/{target}{suffix}.git"
             moves.append((source, destination_root / f"{target}{suffix}", url, branch))
-    # Check everything first so a problem with either clone leaves both untouched.
+    # Check everything before touching anything, so a problem with either clone leaves both
+    # exactly as they were.
     for source, destination, _, branch in moves:
         reasons = _unclean_reasons(source, branch)
         if reasons:
             raise MigrationError(f"{source.name} is not clean: {', '.join(reasons)}")
         if destination != source and destination.exists():
             raise MigrationError(f"destination exists: {destination}")
-    for source, destination, url, _ in moves:
+    for source, _, url, _ in moves:
         _git(source, "remote", "set-url", "origin", url)
+    for source, destination, _, _ in moves:
         if destination != source:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(source, destination)
