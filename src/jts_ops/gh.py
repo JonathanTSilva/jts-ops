@@ -42,10 +42,16 @@ def _field_args(fields: Mapping[str, Any]) -> list[str]:
     return args
 
 
+class ReadOnlyError(GhError):
+    """A non-GET call was attempted on a read-only `Gh`."""
+
+
 class Gh:
-    def __init__(self, owner: str, runner: Runner = default_runner) -> None:
+    def __init__(self, owner: str, runner: Runner = default_runner, read_only: bool = True) -> None:
         self.owner = owner
         self._runner = runner
+        # Structural dry-run guard: while set, `api` refuses every non-GET call.
+        self.read_only = read_only
 
     def api(
         self,
@@ -61,6 +67,8 @@ class Gh:
         into one list. `body` is sent as a JSON request body (`gh api --input`), for
         payloads the `-f/-F` field flags cannot express.
         """
+        if self.read_only and method.upper() != "GET":
+            raise ReadOnlyError(f"refusing {method} {path}: read-only mode")
         args = ["api", "-H", "Accept: application/vnd.github+json", "--method", method]
         if paginate:
             args += ["--paginate", "--slurp"]
@@ -166,4 +174,5 @@ def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
         labels=labels,
         label_details=label_details,
         squash_merge_commit_title=repo.get("squash_merge_commit_title"),
+        squash_merge_commit_message=repo.get("squash_merge_commit_message"),
     )

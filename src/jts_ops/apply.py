@@ -34,7 +34,12 @@ ACTIVE_SETTINGS: dict[str, Any] = {
     "allow_rebase_merge": False,
     "delete_branch_on_merge": True,
     "has_wiki": False,
+}
+# Sent together and as their own change: GitHub validates the pair, and a rejection must not
+# take the flags above down with it.
+SQUASH_FORMAT: dict[str, Any] = {
     "squash_merge_commit_title": "PR_TITLE",
+    "squash_merge_commit_message": "COMMIT_MESSAGES",
 }
 NO_WIKI_SETTINGS: dict[str, Any] = {"has_wiki": False}
 
@@ -181,8 +186,13 @@ def plan_changes(
     entry: InventoryEntry | None,
     std: Standard,
     existing_rulesets: list[dict[str, Any]] | None = None,
+    codeql_state: str | None = None,
 ) -> tuple[list[Change], list[str]]:
-    """Return (changes, skip reasons) for one repo. Pure: makes no API calls."""
+    """Return (changes, skip reasons) for one repo. Pure: makes no API calls.
+
+    `codeql_state` is the repo's current default-setup state: "configured", "not-configured",
+    "unavailable" (unsupported or no languages), or None when it was not read.
+    """
     name = state.name
     if state.archived:
         return [], ["archived: left untouched"]
@@ -199,6 +209,7 @@ def plan_changes(
         "delete_branch_on_merge": state.delete_branch_on_merge,
         "has_wiki": state.has_wiki,
         "squash_merge_commit_title": state.squash_merge_commit_title,
+        "squash_merge_commit_message": state.squash_merge_commit_message,
         "has_discussions": state.has_discussions,
     }
 
@@ -221,6 +232,18 @@ def plan_changes(
     settings = _diff(current, wanted_settings)
     if settings:
         changes.append(Change(name, "settings", settings, _describe(settings, current)))
+    if profile == "active":
+        squash = _diff(current, SQUASH_FORMAT)
+        if squash:
+            # Always send the pair together.
+            changes.append(
+                Change(
+                    name,
+                    "settings",
+                    dict(SQUASH_FORMAT),
+                    "squash commit format: " + _describe(squash, current),
+                )
+            )
 
     # Topics: keep everything except stale kind-/status- topics, add the right two.
     kind = std.kinds.get(entry.kind)
@@ -260,14 +283,17 @@ def plan_changes(
 
     # CodeQL default setup
     if profile == "active" and not state.private:
-        changes.append(
-            Change(
-                name,
-                "codeql-default-setup",
-                {"state": "configured"},
-                "configure CodeQL default setup",
+        if codeql_state == "unavailable":
+            skips.append("codeql: not available")
+        elif codeql_state != "configured":
+            changes.append(
+                Change(
+                    name,
+                    "codeql-default-setup",
+                    {"state": "configured"},
+                    "configure CodeQL default setup",
+                )
             )
-        )
 
     # Ruleset
     if ruleset_eligible(state, entry, std):
@@ -346,6 +372,7 @@ def execute(changes: list[Change], gh: Gh) -> list[tuple[Change, str]]:
     for change in changes:
         try:
             _apply_one(change, gh)
-        except GhError as err:
-            failures.append((change, (err.message.splitlines() or ["unknown error"])[0]))
+        except (GhError, ValueError, OSError) as err:
+            message = err.message if isinstance(err, GhError) else str(err)
+            failures.append((change, (message.splitlines() or ["unknown error"])[0]))
     return failures

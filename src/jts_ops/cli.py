@@ -137,11 +137,24 @@ def _existing_rulesets(gh: Gh, repo: str) -> list[dict[str, Any]]:
     return [gh.api(f"{base}/{r['id']}") for r in summaries if r.get("name") == RULESET_NAME]
 
 
+def _codeql_state(gh: Gh, repo: str) -> str:
+    """Current CodeQL default-setup state, or "unavailable" when GitHub says 403/404."""
+    try:
+        data = gh.api(f"/repos/{gh.owner}/{repo}/code-scanning/default-setup")
+    except GhError as err:
+        if err.status in (403, 404):
+            return "unavailable"
+        raise
+    setup: dict[str, Any] = data or {}
+    return str(setup.get("state", "not-configured"))
+
+
 def run_apply(args: argparse.Namespace, gh: Gh | None = None) -> int:
     standard_dir: Path = args.standard_dir or default_standard_dir()
     std = load_standard(standard_dir)
     inventory = load_inventory(standard_dir)
     gh = gh or Gh(std.owner)
+    gh.read_only = not args.execute  # a dry run cannot write, whatever the code path
     only: set[str] | None = set(args.repo) if args.repo else None
     try:
         listed_repos = list_repos(gh)
@@ -149,11 +162,14 @@ def run_apply(args: argparse.Namespace, gh: Gh | None = None) -> int:
         print(f"jts-ops: cannot list repos: {err.message}", file=sys.stderr)
         return 1
     if only is not None:
-        for missing in sorted(only - {r["name"] for r in listed_repos}):
-            print(f"jts-ops: no such repo: {missing}", file=sys.stderr)
+        missing = sorted(only - {r["name"] for r in listed_repos})
+        if missing:
+            print(f"jts-ops: no such repo: {', '.join(missing)}", file=sys.stderr)
+            return 2
 
     total = 0
-    failed = 0
+    failed = 0  # failed changes plus repos whose state could not be read
+    failed_changes = 0
     for listed in listed_repos:
         name: str = listed["name"]
         if only is not None and name not in only:
@@ -162,10 +178,20 @@ def run_apply(args: argparse.Namespace, gh: Gh | None = None) -> int:
         try:
             state = fetch_state(gh, listed)
             rulesets = _existing_rulesets(gh, name) if ruleset_eligible(state, entry, std) else None
-            changes, skips = plan_changes(state, entry, std, rulesets)
+            codeql = (
+                _codeql_state(gh, name)
+                if entry is not None
+                and entry.profile == "active"
+                and not state.archived
+                and not state.private
+                else None
+            )
+            changes, skips = plan_changes(state, entry, std, rulesets, codeql)
         except GhError as err:
             reason = (err.message.splitlines() or ["unknown error"])[0]
             changes, skips = [], [f"could not read repo state: {reason}"]
+            if args.execute:
+                failed += 1
         if not changes and not skips:
             continue
         print(name)
@@ -177,9 +203,10 @@ def run_apply(args: argparse.Namespace, gh: Gh | None = None) -> int:
         if args.execute and changes:
             for change, reason in execute(changes, gh):
                 failed += 1
+                failed_changes += 1
                 print(f"  FAILED {change.kind}: {reason}", file=sys.stderr)
     if args.execute:
-        print(f"applied {total - failed} of {total} changes")
+        print(f"applied {total - failed_changes} of {total} changes; {failed} failures")
     else:
         print(f"dry run: {total} changes planned, nothing written (pass --execute to apply)")
     return 1 if failed else 0

@@ -33,3 +33,4 @@ class RepoState:
     # Optional extras read by `apply`; the defaults mean "not fetched".
     label_details: tuple[LabelInfo, ...] = ()
     squash_merge_commit_title: str | None = None
+    squash_merge_commit_message: str | None = None

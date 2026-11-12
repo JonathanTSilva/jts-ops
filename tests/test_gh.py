@@ -211,7 +211,7 @@ def test_paginate_flag_passed_and_pages_flattened():
 
 def test_api_passes_method_and_fields():
     runner = FakeRunner({"/repos/x": "runs_empty.json"})
-    Gh("ExampleOwner", runner).api(
+    Gh("ExampleOwner", runner, read_only=False).api(
         "/repos/x", method="PATCH", fields={"description": "hi", "private": True}
     )
     args = runner.calls[0]
@@ -224,4 +224,15 @@ def test_empty_stdout_returns_none():
     def runner(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    assert Gh("ExampleOwner", runner).api("/repos/x", method="PUT") is None
+    assert Gh("ExampleOwner", runner, read_only=False).api("/repos/x", method="PUT") is None
+
+
+def test_read_only_gh_refuses_writes_before_calling_the_runner():
+    runner = FakeRunner({"/repos/x": "runs_empty.json"})
+    gh = Gh("ExampleOwner", runner)
+    for method in ("PATCH", "PUT", "POST", "DELETE"):
+        with pytest.raises(GhError, match="read-only"):
+            gh.api("/repos/x", method=method, body={"a": 1})
+    assert runner.calls == []
+    gh.api("/repos/x")  # GET still works
+    assert len(runner.calls) == 1

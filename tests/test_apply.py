@@ -43,6 +43,7 @@ def make_state(**overrides: Any) -> RepoState:
             LabelInfo("type: docs", "0075ca", "Documentation only"),
         ),
         squash_merge_commit_title="PR_TITLE",
+        squash_merge_commit_message="COMMIT_MESSAGES",
     )
     return replace(base, **overrides)
 
@@ -125,7 +126,7 @@ def test_labels_never_deleted(std: Standard, inv: dict[str, InventoryEntry]):
         calls.append((args[args.index("--method") + 1], next(a for a in args if a.startswith("/"))))
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    execute(changes, Gh("ExampleOwner", runner))
+    execute(changes, Gh("ExampleOwner", runner, read_only=False))
     assert calls
     assert "DELETE" not in {method for method, _ in calls}
 
@@ -140,15 +141,31 @@ def test_topics_replace_stale_kind(std: Standard, inv: dict[str, InventoryEntry]
 
 def test_settings_diff_and_discussions(std: Standard, inv: dict[str, InventoryEntry]):
     entry = replace(inv["ai-helper"], featured=True)
-    state = make_state(allow_merge_commit=True, has_wiki=True, squash_merge_commit_title=None)
+    state = make_state(allow_merge_commit=True, has_wiki=True)
     changes, _ = plan_changes(state, entry, std, [])
-    settings = next(c for c in changes if c.kind == "settings")
-    assert settings.payload == {
-        "allow_merge_commit": False,
-        "has_wiki": False,
+    payloads = [c.payload for c in changes if c.kind == "settings"]
+    assert payloads == [{"allow_merge_commit": False, "has_wiki": False, "has_discussions": True}]
+
+
+def test_squash_format_is_its_own_change_and_always_a_pair(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    pair = {
         "squash_merge_commit_title": "PR_TITLE",
-        "has_discussions": True,
+        "squash_merge_commit_message": "COMMIT_MESSAGES",
     }
+    for state in (
+        make_state(squash_merge_commit_title=None, squash_merge_commit_message=None),
+        make_state(squash_merge_commit_title="COMMIT_OR_PR_TITLE"),
+        make_state(squash_merge_commit_message="PR_BODY"),
+    ):
+        changes, _ = plan_changes(state, inv["ai-helper"], std, [])
+        payloads = [c.payload for c in changes if c.kind == "settings"]
+        assert payloads == [pair]
+    # Flags and format both off: two separate changes.
+    state = make_state(has_wiki=True, squash_merge_commit_title=None)
+    changes, _ = plan_changes(state, inv["ai-helper"], std, [])
+    assert [c.payload for c in changes if c.kind == "settings"] == [{"has_wiki": False}, pair]
 
 
 def test_special_profile_only_disables_wiki(std: Standard, inv: dict[str, InventoryEntry]):
@@ -209,6 +226,17 @@ def test_codeql_public_active_only(std: Standard, inv: dict[str, InventoryEntry]
     assert "codeql-default-setup" not in kinds(private)
     special, _ = plan_changes(make_state(name="ExampleOwner"), inv["ExampleOwner"], std, [])
     assert "codeql-default-setup" not in kinds(special)
+
+
+def test_codeql_state_is_respected(std: Standard, inv: dict[str, InventoryEntry]):
+    entry = inv["ai-helper"]
+    for state, planned in (("configured", False), ("not-configured", True), (None, True)):
+        changes, skips = plan_changes(make_state(), entry, std, [], state)
+        assert ("codeql-default-setup" in kinds(changes)) is planned
+        assert "codeql: not available" not in skips
+    changes, skips = plan_changes(make_state(), entry, std, [], "unavailable")
+    assert "codeql-default-setup" not in kinds(changes)
+    assert "codeql: not available" in skips
 
 
 def test_ruleset_requires_ci_file(std: Standard, inv: dict[str, InventoryEntry]):
@@ -284,9 +312,17 @@ def test_matching_ruleset_is_left_alone_and_differing_is_updated(
 class FakeGithub:
     """Serves GETs for a one-repo account and records every call with its body."""
 
-    def __init__(self, repo: dict[str, Any], fail: tuple[str, str] | None = None) -> None:
-        self.repo = repo
+    def __init__(
+        self,
+        repo: dict[str, Any] | list[dict[str, Any]],
+        fail: tuple[str, str] | None = None,
+        codeql: str | int = "not-configured",
+        broken: set[str] | None = None,
+    ) -> None:
+        self.repos = repo if isinstance(repo, list) else [repo]
         self.fail = fail
+        self.codeql = codeql
+        self.broken = broken or set()
         self.calls: list[tuple[str, str, Any]] = []
 
     def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -305,8 +341,10 @@ class FakeGithub:
         if method != "GET":
             return ok({})
         if path.startswith("/user/repos"):
-            return ok([[self.repo]])
+            return ok([self.repos])
         if "/git/trees/" in path:
+            if path.split("/")[3] in self.broken:
+                return subprocess.CompletedProcess(args, 1, "", "gh: Server Error (HTTP 500)\n")
             return ok({"tree": [{"path": CI, "type": "blob"}]})
         if path.endswith("/readme"):
             return ok({"encoding": "base64", "content": "IyBoaQo="})
@@ -314,6 +352,10 @@ class FakeGithub:
             return ok({"workflow_runs": []})
         if path.endswith("/labels"):
             return ok([[{"name": "Type: Bug", "color": "d22d48", "description": "x"}]])
+        if path.endswith("/code-scanning/default-setup"):
+            if isinstance(self.codeql, int):
+                return subprocess.CompletedProcess(args, 1, "", f"gh: x (HTTP {self.codeql})\n")
+            return ok({"state": self.codeql})
         if path.endswith("/rulesets"):
             no_rulesets: list[object] = []
             return ok([no_rulesets])
@@ -332,9 +374,9 @@ def no_real_private_inventory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     monkeypatch.setenv("JTS_PRIVATE_INVENTORY", str(tmp_path / "absent.yml"))
 
 
-def helper_repo() -> dict[str, Any]:
+def helper_repo(name: str = "ai-helper") -> dict[str, Any]:
     data = json.loads((FIXTURES / "gh" / "repo.json").read_text(encoding="utf-8"))
-    return {**data, "name": "ai-helper", "private": False}
+    return {**data, "name": name, "private": False}
 
 
 def test_dry_run_makes_no_writes(standard_dir: Path, capsys: pytest.CaptureFixture[str]):
@@ -361,6 +403,11 @@ def test_execute_sends_expected_writes(standard_dir: Path):
     by_call = {(m, p): b for m, p, b in writes}
     assert by_call[("POST", f"{base}/labels")]["name"] == "type: docs"
     assert by_call[("PATCH", f"{base}/labels/Type%3A%20Bug")]["new_name"] == "type: bug"
+    patches = [b for m, p, b in writes if m == "PATCH" and p == base]
+    assert {
+        "squash_merge_commit_title": "PR_TITLE",
+        "squash_merge_commit_message": "COMMIT_MESSAGES",
+    } in patches
     assert ("PUT", f"{base}/vulnerability-alerts") in by_call
     assert ("PUT", f"{base}/automated-security-fixes") in by_call
     assert ("PUT", f"{base}/private-vulnerability-reporting") in by_call
@@ -388,9 +435,71 @@ def test_failed_change_does_not_stop_the_rest(
 
 def test_repo_filter(standard_dir: Path, capsys: pytest.CaptureFixture[str]):
     fake = FakeGithub(helper_repo())
-    main(
+    code = main(
         ["apply", "--repo", "other", "--standard-dir", str(standard_dir)], Gh("ExampleOwner", fake)
     )
     captured = capsys.readouterr()
     assert "no such repo: other" in captured.err
-    assert "0 changes" in captured.out
+    assert captured.out == ""
+    assert code == 2
+    assert fake.calls == [("GET", "/user/repos?affiliation=owner&per_page=100", None)]
+
+
+def test_unknown_repo_exits_2_with_execute_too(standard_dir: Path):
+    fake = FakeGithub(helper_repo())
+    args = ["apply", "--execute", "--repo", "nope", "--standard-dir", str(standard_dir)]
+    assert main(args, Gh("ExampleOwner", fake)) == 2
+    assert {m for m, _, _ in fake.calls} == {"GET"}
+
+
+@pytest.mark.parametrize("codeql", ["configured", 404, 403])
+def test_cli_reads_codeql_state(
+    standard_dir: Path, capsys: pytest.CaptureFixture[str], codeql: str | int
+):
+    fake = FakeGithub(helper_repo(), codeql=codeql)
+    main(["apply", "--standard-dir", str(standard_dir)], Gh("ExampleOwner", fake))
+    out = capsys.readouterr().out
+    assert "codeql-default-setup" not in out
+    assert ("skip: codeql: not available" in out) is isinstance(codeql, int)
+    assert any(p.endswith("/code-scanning/default-setup") for _, p, _ in fake.calls)
+
+
+def test_cli_plans_codeql_when_not_configured(
+    standard_dir: Path, capsys: pytest.CaptureFixture[str]
+):
+    fake = FakeGithub(helper_repo(), codeql="not-configured")
+    main(["apply", "--standard-dir", str(standard_dir)], Gh("ExampleOwner", fake))
+    assert "codeql-default-setup" in capsys.readouterr().out
+
+
+def test_second_repo_still_processed_when_first_fails(
+    standard_dir: Path, capsys: pytest.CaptureFixture[str]
+):
+    fake = FakeGithub([helper_repo("ai-broken"), helper_repo("ai-helper")], broken={"ai-broken"})
+    code = main(
+        ["apply", "--execute", "--standard-dir", str(standard_dir)], Gh("ExampleOwner", fake)
+    )
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "could not read repo state" in out
+    assert ("POST", "/repos/ExampleOwner/ai-helper/rulesets") in {(m, p) for m, p, _ in fake.calls}
+    # In a dry run an unreadable repo is only reported.
+    dry = FakeGithub([helper_repo("ai-broken"), helper_repo("ai-helper")], broken={"ai-broken"})
+    assert main(["apply", "--standard-dir", str(standard_dir)], Gh("ExampleOwner", dry)) == 0
+
+
+def test_execute_records_non_gh_errors():
+    def not_json(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, "not json", "")
+
+    first = Change("ai-helper", "topics", {"names": ["a"]}, "x")
+    second = Change("ai-helper", "description", {"description": "d"}, "x")
+    failures = execute([first, second], Gh("ExampleOwner", not_json, read_only=False))
+    assert [c for c, _ in failures] == [first, second]
+
+
+def test_dry_run_locks_even_a_writable_gh(standard_dir: Path):
+    fake = FakeGithub(helper_repo())
+    gh = Gh("ExampleOwner", fake, read_only=False)
+    main(["apply", "--standard-dir", str(standard_dir)], gh)
+    assert gh.read_only is True
