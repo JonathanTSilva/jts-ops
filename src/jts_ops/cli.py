@@ -1,6 +1,8 @@
 """Command line entry point."""
 
 import argparse
+import datetime
+import json
 import os
 import sys
 from collections.abc import Sequence
@@ -11,6 +13,15 @@ from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.gh import Gh, GhError, fetch_state, list_repos
 from jts_ops.inventory import InventoryEntry, load_inventory
+from jts_ops.migrate import (
+    Step,
+    describe_step,
+    execute_migration,
+    load_banner,
+    load_license_texts,
+    plan_digest,
+    plan_migration,
+)
 from jts_ops.new import (
     DEFAULT_TEMPLATE,
     LICENSES,
@@ -95,6 +106,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     new.add_argument(
         "--execute", action="store_true", help="do it; without it only the steps are listed"
+    )
+    migrate = commands.add_parser(
+        "migrate",
+        help="plan and run the irreversible archiving and renaming steps "
+        "(dry run unless --execute --plan FILE)",
+    )
+    migrate.add_argument("--standard-dir", type=Path, default=None, help=standard_dir_help)
+    migrate.add_argument(
+        "--repo",
+        action="append",
+        default=None,
+        metavar="NAME",
+        help="limit to this repo (current name); may be repeated",
+    )
+    migrate.add_argument("--plan-out", type=Path, default=None, help="write the plan here (JSON)")
+    migrate.add_argument(
+        "--execute",
+        action="store_true",
+        help="run the steps; requires --plan with the digest of a reviewed dry run",
+    )
+    migrate.add_argument("--plan", type=Path, default=None, help="the reviewed plan to execute")
+    migrate.add_argument(
+        "--projects-dir", type=Path, default=Path("~/Projects"), help="where local clones live"
+    )
+    migrate.add_argument(
+        "--template-dir",
+        type=Path,
+        default=Path("~/Projects/template-repo"),
+        help="template checkout the license texts are read from",
     )
     return parser
 
@@ -262,6 +302,106 @@ def run_apply(
     return 1 if failed else 0
 
 
+def _load_plan(path: Path) -> tuple[str, list[Step]] | None:
+    """The digest and steps of a saved plan, or None when the file is unusable or altered."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        steps = [Step(**row) for row in data["steps"]]
+        digest = str(data["digest"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return (digest, steps) if plan_digest(steps) == digest else None
+
+
+def run_migrate(args: argparse.Namespace, gh: Gh | None = None) -> int:
+    if args.plan is not None and not args.execute:
+        print("jts-ops: --plan only makes sense with --execute", file=sys.stderr)
+        return 2
+    if args.execute and args.plan is None:
+        print("jts-ops: --execute requires --plan FILE from a reviewed dry run", file=sys.stderr)
+        return 3
+    plan_file: Path | None = args.plan
+    approved: tuple[str, list[Step]] | None = None
+    if args.execute and plan_file is not None:
+        approved = _load_plan(plan_file)
+        if approved is None:
+            print("jts-ops: the plan file is unreadable or was altered", file=sys.stderr)
+            return 3
+
+    standard_dir: Path = args.standard_dir or default_standard_dir()
+    std = load_standard(standard_dir)
+    inventory = load_inventory(standard_dir)
+    try:
+        banner = load_banner(standard_dir)
+        license_texts = load_license_texts(
+            args.template_dir.expanduser(), datetime.date.today().year
+        )
+    except (OSError, ValueError) as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 2
+    gh = gh or Gh(std.owner)
+    gh.read_only = not args.execute  # a dry run cannot write, whatever the code path
+    only: set[str] | None = set(args.repo) if args.repo else None
+    try:
+        listed_repos = list_repos(gh)
+    except GhError as err:
+        print(f"jts-ops: cannot list repos: {err.message}", file=sys.stderr)
+        return 1
+    if only is not None:
+        missing = sorted(only - {r["name"] for r in listed_repos})
+        if missing:
+            print(f"jts-ops: no such repo: {', '.join(missing)}", file=sys.stderr)
+            return 2
+
+    steps: list[Step] = []
+    problems = 0  # repos that could not be planned
+    for listed in listed_repos:
+        name: str = listed["name"]
+        entry = inventory.get(name)
+        if entry is None or (only is not None and name not in only):
+            continue
+        try:
+            state = fetch_state(gh, listed)
+            steps += plan_migration(state, entry, banner, license_texts, std)
+        except (GhError, ValueError) as err:
+            reason = (err.message if isinstance(err, GhError) else str(err)).splitlines()
+            print(f"{name}\n  skip: cannot plan: {reason[0] if reason else 'unknown error'}")
+            problems += 1
+    digest = plan_digest(steps)
+
+    if approved is not None and approved[0] != digest:
+        print(
+            "jts-ops: the plan no longer matches GitHub or the inventory; run a new dry run "
+            f"and review it (approved {approved[0][:12]}, now {digest[:12]})",
+            file=sys.stderr,
+        )
+        return 3
+
+    if args.plan_out:
+        rows = [{"repo": s.repo, "action": s.action, "payload": s.payload} for s in steps]
+        args.plan_out.write_text(
+            json.dumps({"digest": digest, "steps": rows}, indent=2) + "\n", encoding="utf-8"
+        )
+    last_repo = None
+    for step in steps:
+        if step.repo != last_repo:
+            print(step.repo)
+            last_repo = step.repo
+        print(f"  {step.action}: {describe_step(step)}")
+    print(f"{len(steps)} steps, digest {digest}")
+    if not args.execute:
+        print("dry run: nothing written (pass --execute --plan FILE to run it)")
+        return 1 if problems else 0
+
+    failures = 0
+    for step, error in execute_migration(steps, gh, args.projects_dir.expanduser()):
+        if error is not None:
+            failures += 1
+            print(f"  FAILED {step.repo} {step.action}: {error}", file=sys.stderr)
+    print(f"ran {len(steps) - failures} of {len(steps)} steps; {failures} failures")
+    return 1 if failures or problems else 0
+
+
 def run_new(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
     standard_dir: Path = args.standard_dir or default_standard_dir()
     std = load_standard(standard_dir)
@@ -309,6 +449,8 @@ def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = def
         return run_audit(args, gh)
     if args.command == "apply":
         return run_apply(args, gh)
+    if args.command == "migrate":
+        return run_migrate(args, gh)
     return 2  # unreachable: the subparser is required
 
 

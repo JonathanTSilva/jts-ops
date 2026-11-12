@@ -16,7 +16,7 @@ jts-ops: 🧠 CLI that audits and applies the GitHub standard across all reposit
 
 | Module | Does |
 |---|---|
-| `cli.py` | argparse entry point: `audit`, `apply`, `new`; prints, writes reports, sets exit codes |
+| `cli.py` | argparse entry point: `audit`, `apply`, `new`, `migrate`; prints, writes reports, sets exit codes |
 | `standard.py` | Loads `standard.yml` and `labels.yml` into a `Standard` |
 | `inventory.py` | Merges the public `inventory.yml` with the optional private inventory |
 | `naming.py` | Repo name validation against the standard |
@@ -24,6 +24,7 @@ jts-ops: 🧠 CLI that audits and applies the GitHub standard across all reposit
 | `state.py` | `RepoState`, the observed state of one repo |
 | `audit.py` | Pure checks of a `RepoState` against the standard, plus JSON and Markdown reports |
 | `apply.py` | `plan_changes` (pure) and `execute` (writes) for settings, topics, descriptions, labels and security |
+| `migrate.py` | `plan_migration` (pure) and `execute_migration` for the irreversible rename, archive and local-move steps, plus the banner and license loaders |
 | `new.py` | The `new` flow: render the template, lock, commit, create the repo, apply |
 
 ## Rules
