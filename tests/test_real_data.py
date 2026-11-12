@@ -42,7 +42,7 @@ def test_required_files(real_std: Standard):
 
 
 def test_inventory_size(real_inv: dict[str, InventoryEntry]):
-    assert len(real_inv) == 41
+    assert len(real_inv) == 42
 
 
 def test_kinds_and_licenses_valid(real_std: Standard, real_inv: dict[str, InventoryEntry]):
