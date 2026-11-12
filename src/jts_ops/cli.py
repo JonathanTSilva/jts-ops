@@ -125,7 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     adopt.add_argument(
         "--vcs-ref",
         default=TEMPLATE_REF,
-        help=f"template git ref (default {TEMPLATE_REF}, the first with the skeleton switch)",
+        help=f"template git ref (default {TEMPLATE_REF})",
     )
     adopt.add_argument(
         "--render-only",

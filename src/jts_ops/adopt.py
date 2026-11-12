@@ -24,7 +24,7 @@ from jts_ops.new import (
 )
 from jts_ops.standard import Standard
 
-TEMPLATE_REF = "v1.1.0"  # the first template tag with the `skeleton` switch
+TEMPLATE_REF = "v1.1.1"  # template tag with the narrowed pre-commit agent permission
 ISSUE_TITLE = "Adopt the engineering standard"
 COMMIT_TITLE = "chore: adopt the engineering standard (#{n})"
 BRANCH = "chore/{n}-adopt-standard"
