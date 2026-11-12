@@ -4,13 +4,34 @@ Instructions for AI coding agents working in this repository. This file is the s
 
 ## Overview
 
-jts-ops: 🧠 Audit, apply and sync the GitHub standard across all of Jonathan's repos
+jts-ops: 🧠 CLI that audits and applies the GitHub standard across all repositories
 
 - Kind: `jts`
 - Stack: Python (uv, ruff, pyright, pytest)
 - Visibility: public
 - Status: wip
 - License: mit
+
+## Module map
+
+| Module | Does |
+|---|---|
+| `cli.py` | argparse entry point: `audit`, `apply`, `new`; prints, writes reports, sets exit codes |
+| `standard.py` | Loads `standard.yml` and `labels.yml` into a `Standard` |
+| `inventory.py` | Merges the public `inventory.yml` with the optional private inventory |
+| `naming.py` | Repo name validation against the standard |
+| `gh.py` | Read-side adapter over the `gh` CLI; `Gh` is read-only unless told otherwise |
+| `state.py` | `RepoState`, the observed state of one repo |
+| `audit.py` | Pure checks of a `RepoState` against the standard, plus JSON and Markdown reports |
+| `apply.py` | `plan_changes` (pure) and `execute` (writes) for settings, topics, descriptions, labels and security |
+| `new.py` | The `new` flow: render the template, lock, commit, create the repo, apply |
+
+## Rules
+
+- `Gh` is read-only unless `--execute` is passed. Never bypass `read_only` or call a write endpoint from a dry-run path.
+- Tests never hit the network. They use the invented fixtures in `tests/fixtures/` and fake runners, never the real `gh`, GitHub or private inventory (the real-data tests skip when those are absent).
+- Never name a private repository in code, tests, fixtures, docs or commit messages: this repository is public. Use invented names.
+- Never run `apply` or `new` with `--execute` against the real account while developing.
 
 ## Setup
 
