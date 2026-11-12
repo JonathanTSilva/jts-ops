@@ -11,7 +11,7 @@ def check_name(name: str, kind: str, std: Standard) -> list[str]:
         return [] if kind == "special" else [f"{name!r} is a special name, kind must be 'special'"]
 
     problems: list[str] = []
-    if not std.name_pattern.match(name):
+    if not std.name_pattern.fullmatch(name):
         problems.append(f"{name!r} does not match {std.name_pattern.pattern}")
 
     spec = std.kinds[kind]

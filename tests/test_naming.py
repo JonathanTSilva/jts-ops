@@ -15,6 +15,11 @@ def test_uppercase_rejected(std: Standard):
     assert check_name("SI-Cavitation", "research", std) != []
 
 
+def test_trailing_newline_rejected(std: Standard):
+    # `$` alone would accept "abc\n"; the whole name must match.
+    assert check_name("abc\n", "product", std) != []
+
+
 def test_prefix_must_match_kind(std: Standard):
     assert check_name("learn-example", "research", std) != []
 
