@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-jts-ops = "jts_ops.cli:main"
+jts-ops = "jts_ops.cli:console_main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]

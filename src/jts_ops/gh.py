@@ -4,7 +4,7 @@ import base64
 import json
 import re
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any
 
 from jts_ops.state import RepoState
@@ -90,12 +90,12 @@ def list_repos(gh: Gh) -> list[dict[str, Any]]:
     return gh.api("/user/repos?affiliation=owner&per_page=100", paginate=True)
 
 
-def _or_none_on(status: int, gh: Gh, path: str) -> Any:
-    """GET `path`, mapping one expected HTTP status to None; other errors propagate."""
+def _or_none_on(statuses: Collection[int], gh: Gh, path: str) -> Any:
+    """GET `path`, mapping the expected HTTP statuses to None; other errors propagate."""
     try:
         return gh.api(path)
     except GhError as err:
-        if err.status == status:
+        if err.status is not None and err.status in statuses:
             return None
         raise
 
@@ -108,18 +108,25 @@ def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
     branch = repo["default_branch"]
 
     # 409 "Git Repository is empty": a repo with no commits has no tree.
-    tree = _or_none_on(409, gh, f"{base}/git/trees/{branch}?recursive=1")
+    tree = _or_none_on({409}, gh, f"{base}/git/trees/{branch}?recursive=1")
+    # A truncated tree is incomplete, so a "missing file" verdict from it would be wrong.
     files = (
-        None if tree is None else frozenset(e["path"] for e in tree["tree"] if e["type"] == "blob")
+        None
+        if tree is None or tree.get("truncated")
+        else frozenset(e["path"] for e in tree["tree"] if e["type"] == "blob")
     )
 
-    readme_json = _or_none_on(404, gh, f"{base}/readme")
+    readme_json = _or_none_on({404}, gh, f"{base}/readme")
     readme = (
-        None if readme_json is None else base64.b64decode(readme_json["content"]).decode("utf-8")
+        base64.b64decode(readme_json["content"]).decode("utf-8", errors="replace")
+        if readme_json is not None and readme_json.get("encoding") == "base64"
+        else None
     )
 
-    runs = gh.api(f"{base}/actions/runs?branch={branch}&per_page=1")["workflow_runs"]
-    ci_conclusion = runs[0]["conclusion"] if runs else None
+    # 403/404: Actions disabled or not visible; there is simply no CI signal.
+    runs_json = _or_none_on({403, 404}, gh, f"{base}/actions/runs?branch={branch}&per_page=1")
+    runs: list[dict[str, Any]] = runs_json["workflow_runs"] if runs_json else []
+    ci_conclusion: str | None = runs[0]["conclusion"] if runs else None
 
     labels = tuple(label["name"] for label in gh.api(f"{base}/labels", paginate=True))
     license_info = repo.get("license")

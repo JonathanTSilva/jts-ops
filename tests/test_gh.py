@@ -141,6 +141,35 @@ def test_list_shaped_repo_is_completed_from_repo_endpoint():
     assert state.delete_branch_on_merge is True
 
 
+@pytest.mark.parametrize("status", [403, 404])
+def test_runs_unavailable_gives_no_ci_conclusion(status: int):
+    routes = happy_routes()
+    routes["/actions/runs"] = (status, "Actions unavailable")
+    state = fetch_state(Gh("ExampleOwner", FakeRunner(routes)), repo())
+    assert state.ci_conclusion is None
+
+
+def test_readme_decoded_with_replacement_on_bad_bytes():
+    routes = happy_routes()
+    routes["/readme"] = "readme_badbytes.json"
+    state = fetch_state(Gh("ExampleOwner", FakeRunner(routes)), repo())
+    assert state.readme == "# Title \ufffd\ufffd broken\n"
+
+
+def test_readme_with_unknown_encoding_is_none():
+    routes = happy_routes()
+    routes["/readme"] = "readme_unencoded.json"
+    state = fetch_state(Gh("ExampleOwner", FakeRunner(routes)), repo())
+    assert state.readme is None
+
+
+def test_truncated_tree_gives_no_files():
+    routes = happy_routes()
+    routes["/git/trees/"] = "tree_truncated.json"
+    state = fetch_state(Gh("ExampleOwner", FakeRunner(routes)), repo())
+    assert state.files is None
+
+
 def test_license_none_when_repo_has_no_license():
     data = repo()
     data["license"] = None
