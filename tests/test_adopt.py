@@ -1,3 +1,4 @@
+import datetime
 import re
 import subprocess
 from collections.abc import Sequence
@@ -7,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from jts_ops.adopt import AdoptError, adopt_repo
+from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
 from jts_ops.cli import main
 from jts_ops.gh import Gh
 from jts_ops.inventory import InventoryEntry
@@ -18,7 +19,7 @@ OWNER = "ExampleOwner"
 CLONE = "old-widget"  # current name; the inventory target is "widget"
 ISSUE_URL = f"https://github.com/{OWNER}/{CLONE}/issues/42"
 PR_URL = f"https://github.com/{OWNER}/{CLONE}/pull/43"
-ANSWERS = "_commit: v1.0.1\n_src_path: {src}\nrepo_name: widget\n"
+ANSWERS = "_commit: v1.1.0\n_src_path: {src}\nrepo_name: widget\nskeleton: {skeleton}\n"
 
 # The regex of .github/actions/branch-name/check.sh, re-implemented.
 TYPES = "feat|fix|docs|refactor|test|ci|chore|perf|build"
@@ -34,6 +35,9 @@ class FakeCommands:
         self.branch = branch
         self.counts = counts
         self.fail_on: str | None = None
+        self.copier_output = ""  # what copier prints, for example `conflict .gitignore` lines
+        self.diff = ""  # tracked-file modifications seen after copier
+        self.skeleton = "false"  # what the rendered answers file records
 
     def __call__(self, args: Sequence[str], cwd: Path | None) -> subprocess.CompletedProcess[str]:
         argv = list(args)
@@ -50,6 +54,8 @@ class FakeCommands:
                 out = f"{self.branch}\n"
             case ["git", "rev-list", *_]:
                 out = f"{self.counts}\n"
+            case ["git", "diff", "--name-only"]:
+                out = self.diff
             case ["gh", "issue", "create"]:
                 out = f"{ISSUE_URL}\n"
             case ["gh", "pr", "create"]:
@@ -57,7 +63,9 @@ class FakeCommands:
             case _:
                 pass
         if "copy" in argv and cwd is not None:
-            (cwd / ".copier-answers.yml").write_text(ANSWERS.format(src=argv[-2]), encoding="utf-8")
+            answers = ANSWERS.format(src=argv[-2], skeleton=self.skeleton)
+            (cwd / ".copier-answers.yml").write_text(answers, encoding="utf-8")
+            out = self.copier_output
         return subprocess.CompletedProcess(args, 0, out, "")
 
     @property
@@ -115,13 +123,15 @@ def exclusions(argv: list[str]) -> list[str]:
 def test_never_overwrites_readme_license(
     std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
 ):
-    clone_dir(tmp_path, "LICENSE")
+    clone_dir(tmp_path, "README.md", "LICENSE")
     cmd = FakeCommands()
     adopt(std, inv, tmp_path, cmd)
     copier = cmd.find("copier")
     assert "--exclude" in copier
     assert {"README.md", "LICENSE"} <= set(exclusions(copier))
-    assert "--overwrite" in copier
+    assert "--overwrite" not in copier
+    assert "-w" not in copier
+    assert copier[copier.index("--skip") + 1] == "**"
 
 
 @pytest.mark.parametrize("license_file", ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"])
@@ -138,7 +148,7 @@ def test_existing_license_file_is_kept(
 def test_company_license_is_kept_even_without_a_file(
     std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
 ):
-    clone_dir(tmp_path)
+    clone_dir(tmp_path, "README.md")
     company = {CLONE: replace(inv[CLONE], license="company")}
     cmd = FakeCommands()
     adopt(std, company, tmp_path, cmd)
@@ -151,7 +161,7 @@ def test_company_license_is_kept_even_without_a_file(
 def test_missing_license_is_rendered_from_the_inventory(
     std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
 ):
-    clone_dir(tmp_path)  # no license file at all
+    clone_dir(tmp_path, "README.md")  # no license file at all
     cmd = FakeCommands()
     adopt(std, inv, tmp_path, cmd)
     copier = cmd.find("copier")
@@ -269,7 +279,9 @@ def test_answers_from_inventory(std: Standard, inv: dict[str, InventoryEntry], t
     } <= answers
     assert f"repo_name={CLONE}" not in answers
     assert copier[copier.index("--vcs-ref") + 1] == "v1.1.0"
-    assert {"--defaults", "--overwrite"} <= set(copier)
+    assert "--defaults" in copier
+    assert "--overwrite" not in copier
+    assert {"has_release=false", f"year={datetime.date.today().year}"} <= answers
     assert "gh:ExampleOwner/template-repo" in copier
     assert "." in copier
 
@@ -289,6 +301,8 @@ def test_execute_runs_every_step_in_order(
         "gh issue",
         "git switch",
         "copier copy",
+        "git diff",
+        "git ls-files",
         "git add",
         "git commit",
         "git push",
@@ -327,9 +341,10 @@ def test_render_only_stops_after_copier_on_a_scratch_branch(
     clone_dir(tmp_path)
     cmd = FakeCommands()
     steps = adopt(std, inv, tmp_path, cmd, render_only=True)
-    assert cmd.programs[-2:] == ["git switch", "copier copy"]
+    assert cmd.programs[-4:] == ["git switch", "copier copy", "git diff", "git ls-files"]
     assert cmd.find("git", "switch")[2] == "-c"
-    assert "chore/" not in cmd.find("git", "switch")[-1]
+    branch = cmd.find("git", "switch")[-1]
+    assert re.fullmatch(r"scratch/adopt-standard-\d{14}", branch)
     for banned in ("gh", "git push", "git commit", "git add"):
         assert not any(" ".join(argv).startswith(banned) for argv in cmd.commands), banned
     assert not any("PR" in s or "pull" in s.lower() for s in steps)
@@ -341,8 +356,140 @@ def test_render_only_runs_without_execute(
     clone_dir(tmp_path)
     cmd = FakeCommands()
     adopt(std, inv, tmp_path, cmd, render_only=True, execute=False)
-    assert cmd.programs[-2:] == ["git switch", "copier copy"]
+    assert "copier copy" in cmd.programs
     assert not any(argv[0] == "gh" for argv in cmd.commands)
+
+
+CONFLICT_OUTPUT = (
+    "Copying from template version 1.1.0\n"
+    "\x1b[1m    conflict\x1b[0m  .gitignore\n"
+    "\x1b[1m        skip\x1b[0m  .gitignore\n"
+    "\x1b[1m    conflict\x1b[0m  .editorconfig\n"
+    "\x1b[1m      create\x1b[0m  AGENTS.md\n"
+)
+
+
+def test_conflicts_reach_the_steps_and_the_pr_body(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    clone_dir(tmp_path, ".gitignore", ".editorconfig")
+    cmd = FakeCommands()
+    cmd.copier_output = CONFLICT_OUTPUT
+    steps = adopt(std, inv, tmp_path, cmd)
+    note = "exists and differs from the standard; not replaced, merge by hand"
+    for path in (".gitignore", ".editorconfig"):
+        assert f"kept: {path} {note}" in steps
+    assert not any("AGENTS.md" in s and "kept" in s for s in steps)
+    pr = cmd.find("gh", "pr", "create")
+    body = pr[pr.index("--body") + 1]
+    left_alone = body.split("Left alone:")[1].split("## Linked issue")[0]
+    assert f"- .gitignore {note}" in left_alone
+    assert f"- .editorconfig {note}" in left_alone
+
+
+def test_existing_gitignore_is_reported(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    clone_dir(tmp_path, ".gitignore")
+    cmd = FakeCommands()
+    cmd.copier_output = "    conflict  .gitignore\n        skip  .gitignore\n"
+    steps = adopt(std, inv, tmp_path, cmd, render_only=True)
+    assert any(s.startswith("kept: .gitignore exists and differs") for s in steps)
+    assert (tmp_path / CLONE / ".gitignore").read_text(encoding="utf-8") == "existing\n"
+
+
+def test_tracked_file_modification_aborts_before_staging(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    clone_dir(tmp_path)
+    cmd = FakeCommands()
+    cmd.diff = ".gitignore\nsrc/app.py\n"
+    with pytest.raises(AdoptError, match=r"modified existing files.*\.gitignore, src/app\.py"):
+        adopt(std, inv, tmp_path, cmd)
+    for banned in ("git add", "git commit", "git push", "gh pr"):
+        assert not any(" ".join(argv).startswith(banned) for argv in cmd.commands), banned
+
+
+def test_skeleton_not_recorded_false_aborts(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    clone_dir(tmp_path)
+    cmd = FakeCommands()
+    cmd.skeleton = "true"  # an older template ref that ignores the switch
+    with pytest.raises(AdoptError, match="skeleton: false"):
+        adopt(std, inv, tmp_path, cmd)
+    assert not any(" ".join(argv).startswith("git add") for argv in cmd.commands)
+
+
+def test_template_ref_defaults_to_the_pinned_tag(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    clone_dir(tmp_path)
+    cmd = FakeCommands()
+    adopt_repo(
+        CLONE,
+        stack="python",
+        std=std,
+        inv=inv,
+        gh=Gh(OWNER, read_only=False),
+        cmd=cmd,
+        projects_dir=tmp_path,
+        execute=True,
+    )
+    copier = cmd.find("copier")
+    assert copier[copier.index("--vcs-ref") + 1] == TEMPLATE_REF == "v1.1.0"
+
+
+def test_readme_only_excluded_when_it_exists(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    clone_dir(tmp_path)  # no README
+    cmd = FakeCommands()
+    steps = adopt(std, inv, tmp_path, cmd)
+    assert "README.md" not in exclusions(cmd.find("copier"))
+    assert not any("README.md kept" in s for s in steps)
+
+
+def test_failure_names_what_was_already_created(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    clone_dir(tmp_path)
+    cmd = FakeCommands()
+    cmd.fail_on = "push"
+    with pytest.raises(AdoptError) as info:
+        adopt(std, inv, tmp_path, cmd)
+    message = str(info.value)
+    for expected in ("issue #42", "chore/42-adopt-standard", "rendered files", "a local commit"):
+        assert expected in message, expected
+
+
+@pytest.mark.parametrize(
+    ("files", "workflow", "expected"),
+    [
+        ((), None, "false"),
+        (("release-please-config.json",), None, "true"),
+        ((".release-please-manifest.json",), None, "true"),
+        ((), "uses: googleapis/release-please-action@v4\n", "true"),
+        ((), "uses: actions/checkout@v4\n", "false"),
+    ],
+)
+def test_has_release_from_release_please_signals(
+    std: Standard,
+    inv: dict[str, InventoryEntry],
+    tmp_path: Path,
+    files: tuple[str, ...],
+    workflow: str | None,
+    expected: str,
+):
+    clone = clone_dir(tmp_path, *files)
+    if workflow is not None:
+        (clone / ".github/workflows").mkdir(parents=True)
+        (clone / ".github/workflows/release.yaml").write_text(workflow, encoding="utf-8")
+    cmd = FakeCommands()
+    adopt(std, inv, tmp_path, cmd, year=2031)
+    copier = cmd.find("copier")
+    assert f"has_release={expected}" in copier
+    assert "year=2031" in copier
 
 
 def test_failed_step_is_reported(std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path):

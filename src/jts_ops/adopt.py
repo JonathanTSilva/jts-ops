@@ -1,8 +1,13 @@
 """`jts-ops adopt`: render the Copier template onto an existing repo and open a PR."""
 
+import datetime
 import re
+import shlex
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any, cast
+
+import yaml
 
 from jts_ops.gh import Gh
 from jts_ops.inventory import InventoryEntry
@@ -19,15 +24,44 @@ from jts_ops.new import (
 )
 from jts_ops.standard import Standard
 
+TEMPLATE_REF = "v1.1.0"  # the first template tag with the `skeleton` switch
 ISSUE_TITLE = "Adopt the engineering standard"
 COMMIT_TITLE = "chore: adopt the engineering standard (#{n})"
 BRANCH = "chore/{n}-adopt-standard"
-SCRATCH_BRANCH = "scratch/adopt-standard"
+SCRATCH_BRANCH = "scratch/adopt-standard-{stamp}"
 ISSUE_LABELS = ("type: chore", "status: in-progress")
 CI_WORKFLOW = ".github/workflows/ci.yml"
 ADOPTABLE_PROFILE = "active"
 AI_NOTE = "AI assistance: Claude Code, rendered by jts-ops adopt"
+RELEASE_PLEASE_FILES = ("release-please-config.json", ".release-please-manifest.json")
 _ISSUE_NUMBER = re.compile(r"/issues/(\d+)")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_CONFLICT = re.compile(r"^\s*conflict\s+(.+?)\s*$")
+
+
+def _conflicts(output: str) -> list[str]:
+    """Paths copier reported as `conflict` (existing and different), in order, without repeats."""
+    found: list[str] = []
+    for line in _ANSI.sub("", output).splitlines():
+        match = _CONFLICT.match(line)
+        if match and match.group(1) not in found:
+            found.append(match.group(1))
+    return found
+
+
+def _uses_release_please(clone: Path) -> bool:
+    if any((clone / name).is_file() for name in RELEASE_PLEASE_FILES):
+        return True
+    workflows = clone / ".github" / "workflows"
+    if not workflows.is_dir():
+        return False
+    for path in [*workflows.glob("*.yml"), *workflows.glob("*.yaml")]:
+        try:
+            if "release-please" in path.read_text(encoding="utf-8"):
+                return True
+        except (OSError, UnicodeDecodeError):
+            continue
+    return False
 
 
 class AdoptError(Exception):
@@ -35,11 +69,11 @@ class AdoptError(Exception):
 
 
 def _pr_body(number: str, template: str, kept: list[str]) -> str:
-    kept_lines = "".join(f"- {text}\n" for text in kept)
+    kept_lines = "".join(f"- {text}\n" for text in kept) or "- nothing\n"
     return (
         "## Summary\n\n"
         f"Renders the engineering standard from `{template}` onto this repo with the project "
-        "skeleton switched off, so no source, manifest or test file is touched.\n\n"
+        "skeleton switched off. Existing files are never replaced, only added next to.\n\n"
         f"Left alone:\n\n{kept_lines}\n"
         f"## Linked issue\n\nCloses #{number}\n\n"
         "## Type\n\n"
@@ -70,7 +104,8 @@ def adopt_repo(
     cmd: Cmd,
     projects_dir: Path,
     template: str = DEFAULT_TEMPLATE,
-    vcs_ref: str | None = None,
+    vcs_ref: str = TEMPLATE_REF,
+    year: int | None = None,
     execute: bool = False,
     render_only: bool = False,
     on_step: Callable[[str], None] | None = None,
@@ -101,8 +136,10 @@ def adopt_repo(
         raise AdoptError(f"no clone at {clone}")
 
     kept: list[str] = []
-    excludes = ["README.md"]
-    kept.append("README.md kept as it is")
+    excludes: list[str] = []
+    if any(path.name.upper().startswith("README") for path in clone.iterdir()):
+        excludes.append("README.md")
+        kept.append("README.md kept as it is")
     license_files = sorted(f for f in LICENSE_FILES if (clone / f).is_file())
     if license_files or entry.license == "company":
         excludes.append("LICENSE")
@@ -122,30 +159,39 @@ def adopt_repo(
         "visibility": entry.visibility,
         "license": license_answer,
         "status": entry.status,
+        "has_release": "true" if _uses_release_please(clone) else "false",
+        "year": str(year or datetime.date.today().year),
         "skeleton": "false",
     }
-    copier = [*copier_command(), "copy", "--defaults", "--overwrite"]
-    if vcs_ref:
-        copier += ["--vcs-ref", vcs_ref]
+    # `--skip '**'`: a file that already exists is reported as a conflict and never replaced.
+    copier = [*copier_command(), "copy", "--defaults", "--skip", "**", "--vcs-ref", vcs_ref]
     for key, value in answers.items():
         copier += ["--data", f"{key}={value}"]
     for pattern in excludes:
         copier += ["--exclude", pattern]
     copier += [template, "."]
 
-    state: dict[str, str] = {"n": "<n>", "branch": "", "default": "main"}
+    state: dict[str, str] = {"n": "<n>", "branch": "", "default": "main", "done": ""}
+    done: list[str] = []
     repo = f"{gh.owner}/{name}"
     steps: list[str] = []
 
-    def sh(argv: list[str], text: str) -> str:
+    def left_behind() -> str:
+        if not done:
+            return "nothing was created, the clone is as it was"
+        return f"already created, nothing deleted: {'; '.join(done)}"
+
+    def sh(argv: list[str], text: str, *, both: bool = False) -> str:
         try:
             result = cmd(argv, clone)
         except OSError as err:
-            raise AdoptError(f"step failed: {text}: cannot run {argv[0]}: {err.strerror}") from err
+            raise AdoptError(
+                f"step failed: {text}: cannot run {argv[0]}: {err.strerror} ({left_behind()})"
+            ) from err
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip() or "no output"
-            raise AdoptError(f"step failed: {text}: {detail} (the clone is left as it is)")
-        return result.stdout.strip()
+            raise AdoptError(f"step failed: {text}: {detail} ({left_behind()})")
+        return f"{result.stdout}\n{result.stderr}" if both else result.stdout.strip()
 
     def precheck() -> None:
         head = sh(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], "default branch")
@@ -182,21 +228,51 @@ def adopt_repo(
             raise AdoptError("cannot read the issue number from `gh issue create` output")
         state["n"] = match.group(1)
         state["branch"] = BRANCH.format(n=state["n"])
+        done.append(f"issue #{state['n']}")
 
     def switch() -> None:
         sh(["git", "switch", "-c", state["branch"]], "git switch")
+        done.append(f"branch {state['branch']}")
 
     def render() -> None:
-        sh(copier, "copier copy")
+        output = sh(copier, "copier copy", both=True)
+        for path in _conflicts(output):
+            kept.append(f"{path} exists and differs from the standard; not replaced, merge by hand")
+        answers = clone / ".copier-answers.yml"
+        try:
+            loaded: Any = yaml.safe_load(answers.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            loaded = None
+        recorded = (
+            cast(dict[str, Any], loaded).get("skeleton") if isinstance(loaded, dict) else None
+        )
+        if recorded is not False:
+            raise AdoptError(
+                f"copier did not record skeleton: false in .copier-answers.yml; template ref "
+                f"{vcs_ref} may predate the skeleton switch ({left_behind()})"
+            )
         if is_local_template(template):
             rewrite_src_path(clone)
+        # Adopt only ever adds files: a change to a tracked file means something went wrong.
+        changed = sh(["git", "diff", "--name-only"], "git diff").splitlines()
+        if changed:
+            raise AdoptError(
+                f"copier modified existing files, which adopt never does: {', '.join(changed)} "
+                f"({left_behind()}; review with `git diff`)"
+            )
+        added = sh(["git", "ls-files", "--others", "--exclude-standard"], "git ls-files")
+        files = added.splitlines()
+        shown = ", ".join(files[:20]) + (f" and {len(files) - 20} more" if len(files) > 20 else "")
+        done.append(f"rendered files, uncommitted: {shown or 'none'}")
 
     def commit() -> None:
         sh(["git", "add", "-A"], "git add")
         sh(["git", "commit", "-m", COMMIT_TITLE.format(n=state["n"])], "git commit")
+        done.append("a local commit")
 
     def push() -> None:
         sh(["git", "push", "-u", "origin", state["branch"]], "git push")
+        done.append("the branch pushed to origin")
 
     def pull_request() -> None:
         title = COMMIT_TITLE.format(n=state["n"])
@@ -211,7 +287,8 @@ def adopt_repo(
         state["url"] = url.splitlines()[-1] if url else ""
 
     def scratch_switch() -> None:
-        state["branch"] = SCRATCH_BRANCH
+        stamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        state["branch"] = SCRATCH_BRANCH.format(stamp=stamp)
         switch()
 
     branch_text = BRANCH.format(n="<n>")
@@ -219,13 +296,13 @@ def adopt_repo(
         ("precheck: clean tree, default branch, up to date with origin", precheck)
     ]
     if render_only:
-        plan.append((f"git switch -c {SCRATCH_BRANCH}", scratch_switch))
+        plan.append((f"git switch -c {SCRATCH_BRANCH.format(stamp='<timestamp>')}", scratch_switch))
     else:
         plan += [
             (f"gh issue create: {ISSUE_TITLE}", create_issue),
             (f"git switch -c {branch_text}", switch),
         ]
-    plan.append((" ".join(copier), render))
+    plan.append((shlex.join(copier), render))
     if not render_only:
         plan += [
             (f"git add -A && git commit -m '{COMMIT_TITLE.format(n='<n>')}'", commit),

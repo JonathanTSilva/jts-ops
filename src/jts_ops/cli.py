@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from jts_ops.adopt import AdoptError, adopt_repo
+from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
 from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.gh import Gh, GhError, fetch_state, list_repos
@@ -122,7 +122,11 @@ def build_parser() -> argparse.ArgumentParser:
     adopt.add_argument(
         "--template", default=DEFAULT_TEMPLATE, help="Copier template (git URL or local path)"
     )
-    adopt.add_argument("--vcs-ref", default=None, help="template git ref (for example v1.1.0)")
+    adopt.add_argument(
+        "--vcs-ref",
+        default=TEMPLATE_REF,
+        help=f"template git ref (default {TEMPLATE_REF}, the first with the skeleton switch)",
+    )
     adopt.add_argument(
         "--render-only",
         action="store_true",
