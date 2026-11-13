@@ -1,6 +1,7 @@
 """Command line entry point."""
 
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -36,6 +37,7 @@ from jts_ops.new import (
 )
 from jts_ops.standard import Standard, load_standard
 from jts_ops.state import RepoState
+from jts_ops.sync import SyncAction, execute_sync, plan_sync, scan_local, summarize
 
 STANDARD_DIR_ENV = "JTS_STANDARD_DIR"
 
@@ -164,6 +166,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("~/Projects/template-repo"),
         help="template checkout the license texts are read from",
+    )
+    sync = commands.add_parser(
+        "sync",
+        help="mirror GitHub into the projects dir: clone new repos, archive and rename "
+        "folders, fast-forward clean clones (dirty clones are only fetched)",
+    )
+    sync.add_argument("--standard-dir", type=Path, default=None, help=standard_dir_help)
+    sync.add_argument(
+        "--projects-dir", type=Path, default=Path("~/Projects"), help="where local clones live"
+    )
+    sync.add_argument(
+        "--dry-run", action="store_true", help="list what would happen; run no git write"
+    )
+    sync.add_argument(
+        "--notify",
+        action="store_true",
+        help="desktop notification when something failed or a dirty or orphaned clone exists",
     )
     return parser
 
@@ -499,6 +518,56 @@ def run_adopt(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default
     return 0
 
 
+SYNC_QUIET_KINDS = frozenset({"fetch", "fast-forward"})
+
+
+def _notify(run: Cmd, body: str) -> None:
+    with contextlib.suppress(OSError):  # no notify-send here; the summary was printed anyway
+        run(["notify-send", "jts-ops sync", body], None)
+
+
+def run_sync(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
+    standard_dir: Path = args.standard_dir or default_standard_dir()
+    std = load_standard(standard_dir)
+    inventory = load_inventory(standard_dir)
+    projects_dir: Path = args.projects_dir.expanduser()
+    if not projects_dir.is_dir():
+        print(f"jts-ops: no such projects dir: {projects_dir}", file=sys.stderr)
+        return 2
+    gh = gh or Gh(std.owner)  # read-only: sync never writes to GitHub
+    try:
+        remote = list_repos(gh)
+    except GhError as err:
+        print(f"jts-ops: cannot list repos: {err.message}", file=sys.stderr)
+        if args.notify and not args.dry_run:
+            _notify(run, f"cannot list repos: {err.message}")
+        return 1
+    actions = plan_sync(
+        remote, scan_local(projects_dir, run), inventory, projects_dir, owner=std.owner
+    )
+    for action in actions:
+        if action.kind not in SYNC_QUIET_KINDS:
+            print(f"  {action.kind}: {action.repo}: {action.detail}")
+    if args.dry_run:
+        results: list[tuple[SyncAction, str | None]] = [(a, None) for a in actions]
+    else:
+        results = execute_sync(actions, run, projects_dir)
+    failures = 0
+    for action, error in results:
+        if error is not None and error != "skipped: earlier step failed":
+            failures += 1
+            print(f"  FAILED {action.repo} {action.kind}: {error}", file=sys.stderr)
+    summary = summarize(results, dry_run=args.dry_run)
+    print(summary)
+    flagged = any(
+        a.kind == "orphaned" or (a.kind == "skip" and a.detail.startswith("dirty:"))
+        for a in actions
+    )
+    if args.notify and not args.dry_run and (failures or flagged):
+        _notify(run, summary)
+    return 1 if failures else 0
+
+
 def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
     """Entry point for the `jts-ops` console script."""
     args = build_parser().parse_args(argv)
@@ -512,6 +581,8 @@ def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = def
         return run_apply(args, gh)
     if args.command == "migrate":
         return run_migrate(args, gh)
+    if args.command == "sync":
+        return run_sync(args, gh, run)
     return 2  # unreachable: the subparser is required
 
 
