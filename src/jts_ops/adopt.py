@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import yaml
 
+from jts_ops.brand import BrandError, brand_clone
 from jts_ops.gh import Gh
 from jts_ops.inventory import InventoryEntry
 from jts_ops.migrate import LICENSE_FILES
@@ -74,7 +75,8 @@ def _pr_body(number: str, template: str, kept: list[str]) -> str:
     return (
         "## Summary\n\n"
         f"Renders the engineering standard from `{template}` onto this repo with the project "
-        "skeleton switched off. Existing files are never replaced, only added next to.\n\n"
+        "skeleton switched off. Existing files are never replaced, only added next to; the README "
+        "only gains the brand header and footer blocks.\n\n"
         f"Left alone:\n\n{kept_lines}\n"
         f"## Linked issue\n\nCloses #{number}\n\n"
         "## Type\n\n"
@@ -140,7 +142,7 @@ def adopt_repo(
     excludes: list[str] = []
     if any(path.name.upper().startswith("README") for path in clone.iterdir()):
         excludes.append("README.md")
-        kept.append("README.md kept as it is")
+        kept.append("README.md kept; only the brand header and footer blocks are added")
     license_files = sorted(f for f in LICENSE_FILES if (clone / f).is_file())
     if license_files or entry.license == "company":
         excludes.append("LICENSE")
@@ -266,6 +268,13 @@ def adopt_repo(
         shown = ", ".join(files[:20]) + (f" and {len(files) - 20} more" if len(files) > 20 else "")
         done.append(f"rendered files, uncommitted: {shown or 'none'}")
 
+    def brand() -> None:
+        try:
+            result = brand_clone(clone, entry.target, entry.description, execute=True)
+        except BrandError as err:
+            raise AdoptError(f"step failed: brand: {err} ({left_behind()})") from err
+        done.append(f"brand: {', '.join(result.written)}")
+
     def commit() -> None:
         sh(["git", "add", "-A"], "git add")
         sh(["git", "commit", "-m", COMMIT_TITLE.format(n=state["n"])], "git commit")
@@ -304,6 +313,7 @@ def adopt_repo(
             (f"git switch -c {branch_text}", switch),
         ]
     plan.append((shlex.join(copier), render))
+    plan.append(("brand: assets/brand header SVGs and the README header and footer blocks", brand))
     if not render_only:
         plan += [
             (f"git add -A && git commit -m '{COMMIT_TITLE.format(n='<n>')}'", commit),

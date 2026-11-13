@@ -565,3 +565,33 @@ def test_cli_error_exits_2(fixtures_dir: Path, tmp_path: Path, capsys: pytest.Ca
     assert code == 2
     assert "not in the inventory" in capsys.readouterr().err
     assert cmd.calls == []
+
+
+def test_adopt_brands_before_the_commit(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    from jts_ops.brand import FOOTER_END, HEADER_START
+
+    clone = clone_dir(tmp_path, "README.md")
+    (clone / "README.md").write_text("# Widget\n\nBody.\n", encoding="utf-8")
+    cmd = FakeCommands()
+    steps = adopt(std, inv, tmp_path, cmd)
+    texts = [s for s in steps if not s.startswith("kept:")]
+    brand_at = next(i for i, s in enumerate(texts) if s.startswith("brand:"))
+    assert texts[brand_at - 1].startswith("copier") or "copier" in texts[brand_at - 1]
+    assert brand_at < next(i for i, s in enumerate(texts) if s.startswith("git add"))
+    readme = (clone / "README.md").read_text(encoding="utf-8")
+    assert readme.startswith(HEADER_START) and "# Widget\n\nBody." in readme
+    assert readme.rstrip().endswith(FOOTER_END)
+    assert len(list((clone / "assets" / "brand").glob("header-*.svg"))) == 2
+    assert any("README.md kept" in s for s in steps)
+
+
+def test_adopt_dry_run_does_not_brand(
+    std: Standard, inv: dict[str, InventoryEntry], tmp_path: Path
+):
+    clone = clone_dir(tmp_path, "README.md")
+    steps = adopt(std, inv, tmp_path, FakeCommands(), execute=False)
+    assert any(s.startswith("brand:") for s in steps)
+    assert not (clone / "assets").exists()
+    assert (clone / "README.md").read_text(encoding="utf-8") == "existing\n"

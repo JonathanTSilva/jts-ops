@@ -412,3 +412,25 @@ def test_integration_render_lock_and_commit_locally(
     )
     assert log.stdout.strip() == "chore: initial commit from template-repo"
     assert gh_api.paths == []  # render-only never touches GitHub
+
+
+@pytest.mark.parametrize("visibility", ["public", "private"])
+def test_new_brands_the_repo_before_the_first_commit(
+    std: Standard, tmp_path: Path, visibility: str
+):
+    from jts_ops.brand import HEADER_START, brand_hash
+
+    run = FakeCommands()
+    steps = make(std, tmp_path, run, apply=lambda entry: 0, visibility=visibility)
+    brand_step = next(i for i, s in enumerate(steps) if s.startswith("brand:"))
+    assert brand_step < next(i for i, s in enumerate(steps) if s.startswith("git add"))
+    dst = tmp_path / "ai-sample"
+    digest = brand_hash("ai-sample", "A sample repository.")
+    assert (dst / "assets" / "brand" / f"header-{digest}-light.svg").is_file()
+    assert (dst / "README.md").read_text(encoding="utf-8").startswith(HEADER_START)
+
+
+def test_new_dry_run_does_not_brand(std: Standard, tmp_path: Path):
+    steps = make(std, tmp_path, FakeCommands(), execute=False)
+    assert any(s.startswith("brand:") for s in steps)
+    assert list(tmp_path.iterdir()) == []
