@@ -81,7 +81,9 @@ The public `inventory.yml` lists public repos only. Private repos live in the pr
 
 ## Vault notes
 
-`jts-ops vault-sync [--vault ~/Projects/jts-brain] [--dry-run]` writes one note per repo into `02-Areas/Open Source/Repositories/` of an Obsidian vault and keeps it current. It only reads GitHub and only writes files in the vault; it never commits. It rewrites the properties it owns (type, repo, url, visibility, kind, status, stack, topics, last_release, ci, open_issues, archived) and the block between `<!-- jts-ops:start -->` and `<!-- jts-ops:end -->`. Everything else in a note is left alone, a renamed repo's note is moved to the new name, and a file is written only when its content changed.
+`jts-ops vault-sync [--vault ~/Projects/jts-brain] [--dry-run]` writes one note per repo into `02-Areas/Open Source/Repositories/` of an Obsidian vault and keeps it current. It only reads GitHub and only writes files in the vault; it never commits. It rewrites the properties it owns (type, repo, url, visibility, kind, status, stack, topics, last_release, ci, open_issues, archived) and the block between `<!-- jts-ops:start -->` and `<!-- jts-ops:end -->`. Everything else in a note is left alone, a renamed repo's note is moved to the new name, a repo whose name starts with `.` gets `dot-<rest>.md` (Obsidian hides dot files), and a file is written only when its content changed.
+
+`jts-ops ideas [--vault ~/Projects/jts-brain] [--execute]` turns vault notes with `github: idea` and `repo: <name>` (and no `issue:`) into GitHub issues. It is a dry run unless `--execute` is given. The issue title is the note title; the body is the note's `## Idea` section or first paragraph plus a "From the vault" footer. It then writes `issue: <url>` and `github: issued` back into the note and adds the issue to the "Engineering" project when that exists. It refuses to create an issue in a public repo from a note whose text names a private repo.
 
 ## Automatic sync
 

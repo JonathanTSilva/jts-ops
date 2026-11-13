@@ -15,6 +15,7 @@ from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.badges import write_badges
 from jts_ops.gh import Gh, GhError, fetch_state, list_repos
+from jts_ops.ideas import run_ideas
 from jts_ops.inventory import InventoryEntry, load_inventory
 from jts_ops.migrate import (
     Step,
@@ -205,6 +206,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vault.add_argument(
         "--dry-run", action="store_true", help="list what would happen; write no note"
+    )
+    ideas = commands.add_parser(
+        "ideas",
+        help="turn vault notes marked `github: idea` into GitHub issues (dry run unless "
+        "--execute; only vault notes are written, nothing is committed)",
+    )
+    ideas.add_argument("--standard-dir", type=Path, default=None, help=standard_dir_help)
+    ideas.add_argument(
+        "--vault", type=Path, default=Path("~/Projects/jts-brain"), help="the Obsidian vault"
+    )
+    ideas.add_argument(
+        "--execute",
+        action="store_true",
+        help="create the issues and write `issue:` back into the notes (default: dry run)",
     )
     return parser
 
@@ -620,6 +635,24 @@ def run_vault_sync(args: argparse.Namespace, gh: Gh | None = None) -> int:
     return 1 if result.failed else 0
 
 
+def cmd_ideas(args: argparse.Namespace, gh: Gh | None = None) -> int:
+    standard_dir: Path = args.standard_dir or default_standard_dir()
+    std = load_standard(standard_dir)
+    inventory = load_inventory(standard_dir)
+    vault: Path = args.vault.expanduser()
+    if not vault.is_dir():
+        print(f"jts-ops: no such vault: {vault}", file=sys.stderr)
+        return 2
+    gh = gh or Gh(std.owner)
+    try:
+        result = run_ideas(gh, vault, inventory, execute=args.execute)
+    except GhError as err:
+        print(f"jts-ops: cannot read GitHub: {err.message}", file=sys.stderr)
+        return 1
+    print(result.summary(execute=args.execute))
+    return 1 if result.failed else 0
+
+
 def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
     """Entry point for the `jts-ops` console script."""
     args = build_parser().parse_args(argv)
@@ -639,6 +672,8 @@ def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = def
         return run_sync(args, gh, run)
     if args.command == "vault-sync":
         return run_vault_sync(args, gh)
+    if args.command == "ideas":
+        return cmd_ideas(args, gh)
     return 2  # unreachable: the subparser is required
 
 
