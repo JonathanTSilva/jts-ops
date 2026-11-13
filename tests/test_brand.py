@@ -2,14 +2,19 @@ import hashlib
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fontTools.pens.boundsPen import BoundsPen
+from fontTools.svgLib.path import parse_path  # pyright: ignore[reportUnknownVariableType]
 
 from jts_ops.brand import (
     FOOTER_END,
     FOOTER_START,
     HEADER_END,
     HEADER_START,
+    STYLE_VERSION,
+    TEXT_MAX,
     BrandError,
     brand_clone,
     brand_hash,
@@ -43,6 +48,25 @@ def use_extent(svg: str) -> float:
     return max(float(x) for x in re.findall(r'<use [^>]*\bx="([\d.]+)"', svg))
 
 
+def path_bounds(svg: str, glyph_id: str) -> tuple[float, float, float, float]:
+    d = re.search(rf'<path id="{glyph_id}" d="([^"]*)"', svg)
+    assert d
+    pen: Any = BoundsPen(None)
+    parse_path(d.group(1), pen)
+    assert pen.bounds
+    x0, y0, x1, y1 = (float(v) for v in pen.bounds)
+    return x0, y0, x1, y1
+
+
+def first_glyph(svg: str, y_index: int = 0) -> tuple[str, float]:
+    """(glyph id, x) of the first `<use>` on the nth text line, in document order."""
+    uses = re.findall(r'<use href="#(g\d+)" x="(-?[\d.]+)" y="([\d.]+)"', svg)
+    lines: dict[str, tuple[str, float]] = {}
+    for gid, x, y in uses:
+        lines.setdefault(y, (gid, float(x)))
+    return list(lines.values())[y_index]
+
+
 def test_same_input_same_output():
     for theme in ("light", "dark"):
         assert header_svg("scriptize", DESC, theme) == header_svg("scriptize", DESC, theme)
@@ -69,13 +93,13 @@ def test_themes_differ_only_in_colours():
 def test_header_is_transparent():
     for theme in ("light", "dark"):
         svg = header_svg("scriptize", LONG_DESC, theme)
-        assert covering_rects(svg, 1280, 160) == []
+        assert covering_rects(svg, 1280, 140) == []
         for background in ("#F7F8FC", "#0D1117", "#DDE0EE", "#21262D"):
             assert background.lower() not in svg.lower()
         assert 'rx="12"' not in svg  # no rounded panel
         assert "clip-path" not in svg
         root = ET.fromstring(svg)
-        assert root.get("width") == "1280" and root.get("height") == "160"
+        assert root.get("width") == "1280" and root.get("height") == "140"
 
 
 def test_button_canvas_is_transparent_but_pill_is_accent():
@@ -101,26 +125,64 @@ def test_long_description_wraps_and_stays_left_of_the_circuit():
     ys_one = set(re.findall(r'<use [^>]*\by="([\d.]+)"', one))
     ys_wrapped = set(re.findall(r'<use [^>]*\by="([\d.]+)"', wrapped))
     assert len(ys_wrapped) == len(ys_one) + 1  # name line plus two description lines
-    assert use_extent(wrapped) < 880
+    assert use_extent(wrapped) < TEXT_MAX
 
 
 def test_long_name_shrinks_or_wraps_within_the_text_column():
     name = "research-masters-dissertation"
     svg = header_svg(name, LONG_DESC, "dark")
-    assert use_extent(svg) < 880
+    assert use_extent(svg) < TEXT_MAX
     huge = "-".join(["segment"] * 14)
     svg = header_svg(huge, "Short", "dark")
-    assert use_extent(svg) < 880
+    assert use_extent(svg) < TEXT_MAX
     ys = set(re.findall(r'<use [^>]*\by="([\d.]+)"', svg))
     assert len(ys) >= 3  # the name wrapped at hyphens, plus the description
 
 
 def test_hash_changes_with_the_title():
     h = brand_hash("scriptize", DESC)
-    assert h == hashlib.sha256(("scriptize" + clean_description(DESC)).encode()).hexdigest()[:8]
+    data = f"v{STYLE_VERSION}:scriptize{clean_description(DESC)}"
+    assert h == hashlib.sha256(data.encode()).hexdigest()[:8]
     assert re.fullmatch(r"[0-9a-f]{8}", h)
     assert brand_hash("scriptize", DESC + "!") != h
     assert brand_hash("scriptize2", DESC) != h
+
+
+def test_style_version_is_part_of_the_hash(monkeypatch: pytest.MonkeyPatch):
+    assert STYLE_VERSION == 2
+    h = brand_hash("scriptize", DESC)
+    monkeypatch.setattr("jts_ops.brand.STYLE_VERSION", STYLE_VERSION + 1)
+    assert brand_hash("scriptize", DESC) != h
+
+
+def test_title_is_uppercase_monospace():
+    svg = header_svg("scriptize", DESC, "light")
+    # the title is nine glyphs set in JetBrains Mono Bold at the 51px title size, 0.02em apart
+    pitch = 0.6 * 51 + 0.02 * 51
+    first_y = re.search(r'<use [^>]*\by="([\d.]+)"', svg)
+    assert first_y
+    row = re.findall(rf'<use href="#(g\d+)" x="(-?[\d.]+)" y="{first_y.group(1)}"', svg)
+    assert len(row) == len("SCRIPTIZE")
+    xs = [float(x) for _, x in row]
+    steps = [b - a for a, b in zip(xs, xs[1:], strict=False)]
+    assert all(abs(step - pitch) < 0.2 for step in steps)  # fixed pitch: monospace
+    # uppercase: every outline reaches the capital height
+    for gid, _ in row:
+        _, ymin, _, _ = path_bounds(svg, gid)
+        assert -38.5 < ymin < -36.5  # capital height (0.73em = 37.2px); lowercase would be ~27
+    assert "<title" in svg and "scriptize: Standardize" in svg  # the accessible name keeps its case
+
+
+def test_no_horizontal_padding():
+    for theme in ("light", "dark"):
+        svg = header_svg("scriptize", DESC, theme)
+        for line in (0, 1):  # title, then description
+            gid, x = first_glyph(svg, line)
+            xmin, _, _, _ = path_bounds(svg, gid)
+            assert abs(x + xmin) < 0.1  # the first glyph's ink starts at x=0
+        # the circuit's last pad (centre + radius + half the stroke) ends on the right edge
+        dx = float(re.search(r"translate\(([\d.]+) ", svg).group(1))  # pyright: ignore[reportOptionalMemberAccess]
+        assert abs(dx + 1214 + 4.5 + 1 - 1280) < 0.01
 
 
 def test_footer_block():
@@ -348,4 +410,6 @@ def test_fonts_are_packaged_with_their_licence():
     fonts = Path(__file__).parents[1] / "src" / "jts_ops" / "fonts"
     assert (fonts / "Geist-SemiBold.ttf").is_file()
     assert (fonts / "Geist-Regular.ttf").is_file()
+    assert (fonts / "JetBrainsMono-Bold.ttf").is_file()
+    assert "JetBrains Mono" in (fonts / "OFL-JetBrainsMono.txt").read_text(encoding="utf-8")
     assert "SIL Open Font License" in (fonts / "OFL.txt").read_text(encoding="utf-8")

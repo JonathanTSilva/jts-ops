@@ -1,7 +1,9 @@
 """README brand: the per-repo header SVG and the shared footer button, plus `jts-ops brand`.
 
-Same visual family as the profile banner: Geist text converted to paths, accent circuit traces
-with pads and a subtle dot grid. Text is outlined, so the SVGs render identically on GitHub.
+Same visual family as the profile banner: accent circuit traces with pads and a subtle dot grid.
+The title is UPPERCASE JetBrains Mono Bold and the description Geist Regular, both converted to
+paths, so the SVGs render identically on GitHub. The image has no side padding: the text starts
+at x=0 and the circuit ends at the right edge, so it lines up with the README text column.
 The canvas is transparent (no background or panel), so one file works on any page background;
 the light and dark variants differ only in the text and accent colours.
 """
@@ -15,12 +17,18 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 
 FONT_DIR = Path(__file__).parent / "fonts"
-FONT_FILES = {"semibold": "Geist-SemiBold.ttf", "regular": "Geist-Regular.ttf"}
+FONT_FILES = {
+    "semibold": "Geist-SemiBold.ttf",
+    "regular": "Geist-Regular.ttf",
+    "mono": "JetBrainsMono-Bold.ttf",
+}
+STYLE_VERSION = 2  # part of the hash input: a new style gets new file names (GitHub caches by name)
 
 BRAND_DIR = Path("assets") / "brand"
 HEADER_PREFIX = "header-"
@@ -41,13 +49,15 @@ THEMES = {
 TRACE_OPACITY = "0.6"
 DOT_OPACITY = "0.3"
 
-W, H = 1280, 160
-LEFT = 64
-TEXT_MAX = 880 - LEFT  # text must stop before the circuit node at x=990 (with breathing room)
-NODE = (990, 80)
-NAME_SIZE, NAME_MIN = 44, 28
-DESC_SIZE, DESC_MIN = 20, 12
-TRACKING = -0.015
+W, H = 1280, 140
+LEFT = 0  # no side padding: the text starts at the left edge
+MOTIF_DX, MOTIF_DY = 60.5, -10  # the motif's last pad (ring and stroke) ends exactly at x=W
+NODE = (990, 80)  # source node, in motif coordinates
+TEXT_MAX = 940  # text must stop before the circuit node at x=1050 (with breathing room)
+NAME_SIZE, NAME_MIN = 51, 28
+DESC_SIZE, DESC_MIN = 22, 12
+CAP = 0.73  # JetBrains Mono cap height, in em
+TRACKING = 0.02  # title, slightly open
 
 
 class BrandError(Exception):
@@ -78,15 +88,30 @@ Glyphs = dict[tuple[str, float, str], tuple[str, str]]
 
 
 def text_use(
-    s: str, font: str, size: float, x: float, y: float, glyphs: Glyphs, tracking: float = 0.0
+    s: str,
+    font: str,
+    size: float,
+    x: float,
+    y: float,
+    glyphs: Glyphs,
+    tracking: float = 0.0,
+    flush: bool = False,
 ) -> str:
-    """`<use>` markup for s with its baseline at (x, y); outlines are shared through `glyphs`."""
+    """`<use>` markup for s with its baseline at (x, y); outlines are shared through `glyphs`.
+
+    With `flush`, the first glyph's left side bearing is cancelled so its ink starts at x.
+    """
     f = _font(font)
     gs = f.getGlyphSet()
     cmap = f.getBestCmap()
     k = size / f["head"].unitsPerEm
     out: list[str] = []
     cx = x
+    if flush and s:
+        pen: Any = BoundsPen(gs)
+        gs[cmap.get(ord(s[0]), cmap[ord("?")])].draw(pen)
+        if pen.bounds:
+            cx -= float(pen.bounds[0]) * k
     for ch in s:
         g = cmap.get(ord(ch), cmap[ord("?")])
         key = (font, size, ch)
@@ -135,18 +160,19 @@ def _balance(text: str, font: str, size: float, maxw: float) -> list[str]:
 
 
 def _name_lines(name: str) -> tuple[int, list[str]]:
-    """The repo name at 44px, shrunk to fit; split at hyphens only if 28px is still too wide."""
+    """The uppercase repo name at 51px, shrunk to fit; split at hyphens only if 28px is too wide."""
+    name = name.upper()
     size = NAME_SIZE
-    while size > NAME_MIN and text_width(name, "semibold", size, TRACKING) > TEXT_MAX:
+    while size > NAME_MIN and text_width(name, "mono", size, TRACKING) > TEXT_MAX:
         size -= 1
-    if text_width(name, "semibold", size, TRACKING) <= TEXT_MAX:
+    if text_width(name, "mono", size, TRACKING) <= TEXT_MAX:
         return size, [name]
     parts = name.split("-")
     lines: list[str] = []
     cur = ""
     for i, part in enumerate(parts):
         piece = part + ("-" if i < len(parts) - 1 else "")
-        if cur and text_width(cur + piece, "semibold", size, TRACKING) > TEXT_MAX:
+        if cur and text_width(cur + piece, "mono", size, TRACKING) > TEXT_MAX:
             lines.append(cur)
             cur = piece
         else:
@@ -178,7 +204,7 @@ def _motif(accent: str) -> tuple[str, str, str]:
 
 
 def header_svg(name: str, description: str, theme: str) -> str:
-    """The repo header on a transparent 1280x160 canvas; `theme` is `light` or `dark`."""
+    """The repo header on a transparent 1280x140 canvas; `theme` is `light` or `dark`."""
     if theme not in THEMES:
         raise BrandError(f"unknown theme {theme!r}, expected light or dark")
     t = THEMES[theme]
@@ -197,17 +223,17 @@ def header_svg(name: str, description: str, theme: str) -> str:
     lh = ds * 1.4
     nlh = ns * 1.1
     block = (
-        0.71 * ns + (len(name_lines) - 1) * nlh + 24 + 0.71 * ds + (len(lines) - 1) * lh + 0.2 * ds
+        CAP * ns + (len(name_lines) - 1) * nlh + 24 + 0.71 * ds + (len(lines) - 1) * lh + 0.2 * ds
     )
     y0 = (H - block) / 2
-    nb = y0 + 0.71 * ns
+    nb = y0 + CAP * ns
     n_d = "".join(
-        text_use(ln, "semibold", ns, LEFT, round(nb + i * nlh, 1), glyphs, TRACKING)
+        text_use(ln, "mono", ns, LEFT, round(nb + i * nlh, 1), glyphs, TRACKING, flush=True)
         for i, ln in enumerate(name_lines)
     )
     base = nb + (len(name_lines) - 1) * nlh + 24 + 0.71 * ds
     d_d = "".join(
-        text_use(ln, "regular", ds, LEFT, round(base + i * lh, 1), glyphs)
+        text_use(ln, "regular", ds, LEFT, round(base + i * lh, 1), glyphs, flush=True)
         for i, ln in enumerate(lines)
     )
 
@@ -226,11 +252,13 @@ def header_svg(name: str, description: str, theme: str) -> str:
 {gdefs}
 </defs>
 <g mask="url(#m)" opacity="{DOT_OPACITY}"><rect x="{gx}" width="{W - gx}" height="{H}" fill="url(#g)"/></g>
+<g transform="translate({_fmt(MOTIF_DX)} {_fmt(MOTIF_DY)})">
 <g fill="none" stroke="{t["accent"]}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="{TRACE_OPACITY}">{tr}</g>
 <g fill="none" stroke="{t["accent"]}" stroke-width="2" opacity="{TRACE_OPACITY}">{pd}</g>
 <g opacity="{TRACE_OPACITY}">{jd}</g>
 <circle cx="{nx}" cy="{ny}" r="6" fill="none" stroke="{t["accent"]}" stroke-width="2"/>
 <circle cx="{nx}" cy="{ny}" r="2" fill="{t["accent"]}"/>
+</g>
 <g fill="{t["text"]}">{n_d}</g>
 <g fill="{t["accent"]}">{d_d}</g>
 </svg>
@@ -270,8 +298,12 @@ def button_svg(theme: str) -> str:
 
 
 def brand_hash(name: str, description: str) -> str:
-    """First 8 hex chars of sha256(name + description); a new title gives a new file name."""
-    return hashlib.sha256((name + clean_description(description)).encode("utf-8")).hexdigest()[:8]
+    """First 8 hex chars of sha256 over the style version, name and description.
+
+    A new title or a new style version gives a new file name.
+    """
+    data = f"v{STYLE_VERSION}:{name}{clean_description(description)}"
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:8]
 
 
 def header_block(name: str, description: str, digest: str) -> str:
