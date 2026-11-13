@@ -40,7 +40,16 @@ from jts_ops.new import (
 from jts_ops.project import ProjectError, ensure_project, ensure_summary, sync_project
 from jts_ops.standard import Standard, load_standard
 from jts_ops.state import RepoState
-from jts_ops.sync import SyncAction, execute_sync, plan_sync, resolve_renames, scan_local, summarize
+from jts_ops.sync import (
+    SyncAction,
+    count_stale_branches,
+    execute_sync,
+    plan_sync,
+    resolve_renames,
+    scan_local,
+    stale_summary,
+    summarize,
+)
 from jts_ops.vault import sync_vault
 
 STANDARD_DIR_ENV = "JTS_STANDARD_DIR"
@@ -624,6 +633,8 @@ def run_sync(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_
             print(f"  FAILED {action.repo} {action.kind}: {printable(error)}", file=sys.stderr)
     summary = summarize(results, dry_run=args.dry_run)
     print(summary)
+    with contextlib.suppress(OSError):  # information only; never fails the run
+        print(stale_summary(count_stale_branches(projects_dir, run)))
     flagged = any(
         a.kind == "orphaned" or (a.kind == "skip" and a.detail.startswith("dirty:"))
         for a in actions

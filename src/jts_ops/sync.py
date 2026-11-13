@@ -4,9 +4,11 @@
 returns the actions needed. `execute_sync` runs them through the `Cmd` runner. The rules:
 
 - A dirty clone (uncommitted or untracked changes, detached HEAD, no upstream, unpushed
-  commits, a merge or rebase in progress) is never modified: it only gets `git fetch --prune`.
+  commits on the default branch, a merge or rebase in progress) is never modified: it only
+  gets `git fetch --prune`.
 - `git pull` is never used. Updating is `git fetch --prune` then `git merge --ff-only @{u}`,
-  and only on the default branch.
+  and only on the default branch. Other local branches are never touched, so they do not
+  count as unpushed work; branches whose upstream is gone are only counted, never deleted.
 - Nothing is ever deleted. Clones with no repo on GitHub are reported as orphaned, and
   folders that are not clones of the owner's repos as unmanaged.
 """
@@ -119,7 +121,7 @@ def _in_progress(path: Path, cmd: Cmd) -> list[str]:
 def dirty_reasons(path: Path, cmd: Cmd) -> tuple[list[str], bool]:
     """Why a clone must only be fetched, and whether a merge or rebase is under way."""
     try:
-        reasons = unclean_reasons(path, None, cmd)
+        reasons = unclean_reasons(path, None, cmd, scope="default")
         on_branch = cmd(["git", "symbolic-ref", "-q", "HEAD"], path).returncode == 0
         if (
             not reasons
@@ -527,6 +529,28 @@ def execute_sync(
 
 
 # ------------------------------------------------------------------ reporting
+
+
+def count_stale_branches(projects_dir: Path, cmd: Cmd) -> int:
+    """Local branches, over every clone, whose upstream is gone. Information only (reads)."""
+    folders: list[Path] = []
+    for folder in sorted(projects_dir.iterdir()):
+        if folder.is_dir() and folder.name == ARCHIVE_DIR:
+            folders += sorted(c for c in folder.iterdir() if c.is_dir())
+        elif folder.is_dir():
+            folders.append(folder)
+    total = 0
+    for folder in folders:
+        if not (folder / ".git").exists():
+            continue
+        result = cmd(["git", "for-each-ref", "--format=%(upstream:track)", "refs/heads"], folder)
+        if result.returncode == 0:
+            total += sum(1 for line in result.stdout.splitlines() if line.strip() == "[gone]")
+    return total
+
+
+def stale_summary(count: int) -> str:
+    return f"stale local branches: {count} (safe to delete with `git branch -D`)"
 
 
 def summarize(results: Sequence[tuple[SyncAction, str | None]], *, dry_run: bool) -> str:

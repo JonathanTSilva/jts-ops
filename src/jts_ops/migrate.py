@@ -237,12 +237,28 @@ def run_git(cwd: Path, *args: str, run: Cmd = default_cmd) -> str:
     return result.stdout.strip()
 
 
-def unclean_reasons(clone: Path, default_branch: str | None, run: Cmd = default_cmd) -> list[str]:
+def _default_branch_of(clone: Path, run: Cmd) -> str | None:
+    head = run(["git", "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"], clone)
+    name = head.stdout.strip().removeprefix("origin/") if head.returncode == 0 else ""
+    return name or None
+
+
+def unclean_reasons(
+    clone: Path,
+    default_branch: str | None,
+    run: Cmd = default_cmd,
+    scope: Literal["all", "default"] = "all",
+) -> list[str]:
     """Why a clone must not be touched.
 
     Not the root of its own clone, no `origin`, uncommitted work, a side branch (the main clone
     must be on its default branch, the wiki clone just not detached), or unpushed commits.
     With `default_branch=None` only a detached HEAD counts against the branch.
+
+    `scope` is which branches count as unpushed. `"all"` (the default, what a local move needs)
+    counts every local branch. `"default"` (sync, which only ever merges into the default
+    branch) counts only the default branch, taken from `default_branch` or `origin/HEAD`; if
+    that cannot be found it falls back to `"all"`.
     """
     top = run(["git", "rev-parse", "--show-toplevel"], clone)
     if top.returncode != 0 or Path(top.stdout.strip()).resolve() != clone.resolve():
@@ -257,9 +273,21 @@ def unclean_reasons(clone: Path, default_branch: str | None, run: Cmd = default_
         reasons.append(f"on {branch or 'a detached HEAD'}, not {default_branch}")
     elif default_branch is None and not branch:
         reasons.append("detached HEAD")
-    if int(run_git(clone, "rev-list", "--branches", "--not", "--remotes", "--count", run=run)) > 0:
+    if _unpushed(clone, default_branch, run, scope):
         reasons.append("unpushed commits")
     return reasons
+
+
+def _unpushed(clone: Path, default_branch: str | None, run: Cmd, scope: str) -> bool:
+    target = (default_branch or _default_branch_of(clone, run)) if scope == "default" else None
+    if target is None:
+        return (
+            int(run_git(clone, "rev-list", "--branches", "--not", "--remotes", "--count", run=run))
+            > 0
+        )
+    if run(["git", "rev-parse", "--verify", "-q", f"refs/heads/{target}"], clone).returncode != 0:
+        return False  # no local default branch, so nothing of it to lose
+    return int(run_git(clone, "rev-list", "--count", f"origin/{target}..{target}", run=run)) > 0
 
 
 def _local_move(payload: Mapping[str, Any], owner: str, projects_dir: Path) -> None:
