@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from jts_ops.cli import main
-from jts_ops.gh import Gh, GhError, MissingScopeError, ReadOnlyError
+from jts_ops.gh import Gh, GhError, MissingScopeError, ReadOnlyError, printable
 from jts_ops.inventory import InventoryEntry
 from jts_ops.project import (
     PRIORITY,
@@ -382,3 +382,30 @@ def test_sync_without_a_project_says_to_ensure(
     code, _ = run(FakeProjects(), fixtures_dir, "sync")
     assert code == 1
     assert "project ensure" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ terminal escapes
+
+
+def test_printable_drops_control_characters():
+    assert printable("a\x1b[31mred\x1b[0m\x07 b\x00") == "a[31mred[0m b"
+    assert printable("two\nlines\there") == "two lines here"
+    assert printable("plain title, ünïcode") == "plain title, ünïcode"
+
+
+def test_gh_error_messages_carry_no_escape_sequences():
+    assert "\x1b" not in GhError("bad \x1b]0;pwned\x07 thing").message
+
+
+def test_sync_prints_no_escape_sequence_from_a_title(std: Standard, inv: dict[str, InventoryEntry]):
+    fake = ready(std)
+    ISSUES["ai-helper"][0]["title"] = "Retry \x1b[2J\x1b]0;owned\x07 now"
+    try:
+        for execute in (False, True):
+            lines: list[str] = []
+            sync_project(gh_for(fake), inv, execute=execute, report=lines.append)
+            out = "\n".join(lines)
+            assert "Retry [2J]0;owned now" in out
+            assert "\x1b" not in out and "\x07" not in out
+    finally:
+        ISSUES["ai-helper"][0]["title"] = "Retry"

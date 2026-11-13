@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import tempfile
+import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -26,8 +27,24 @@ def default_runner(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
 
 
+def printable(text: object) -> str:
+    """`text` without control characters (Unicode category C*, so no escape sequences), a
+    plain space excepted. Newlines and tabs become spaces. Use it on every piece of
+    GitHub-supplied text before it reaches a terminal."""
+    return "".join(
+        " " if ch in "\n\r\t" else ch
+        for ch in str(text)
+        if ch in "\n\r\t" or unicodedata.category(ch)[0] != "C"
+    )
+
+
 class GhError(Exception):
     def __init__(self, message: str, status: int | None = None) -> None:
+        # The message comes from GitHub and is printed by every caller: strip it here, but keep
+        # line breaks, which callers split on.
+        message = "".join(
+            ch for ch in message if ch in "\n\t" or unicodedata.category(ch)[0] != "C"
+        )
         super().__init__(message)
         self.message = message
         self.status = status
