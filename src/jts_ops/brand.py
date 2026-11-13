@@ -301,14 +301,44 @@ def footer_block() -> str:
     )
 
 
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def _marker_line(text: str, marker: str) -> tuple[int, int] | None:
+    """Offsets of the first line that is exactly `marker`, outside fenced code blocks.
+
+    A marker mentioned in prose or in inline code is not alone on its line, and a marker shown
+    inside a ``` or ~~~ fence is documentation, so neither counts.
+    """
+    fence: str | None = None  # the opening fence run while inside a code block
+    offset = 0
+    for line in text.split("\n"):
+        m = _FENCE.match(line.rstrip("\r"))
+        if fence is not None:
+            if (
+                m
+                and m.group(1)[0] == fence[0]
+                and len(m.group(1)) >= len(fence)
+                and not m.group(2).strip()
+            ):
+                fence = None
+        elif m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            fence = m.group(1)
+        elif line.strip() == marker:
+            start = offset + len(line) - len(line.lstrip())
+            return start, start + len(marker)
+        offset += len(line) + 1
+    return None
+
+
 def _replace_block(text: str, start: str, end: str, block: str) -> tuple[str, bool]:
-    """Replace the marked block; `(text, False)` when neither marker is there."""
-    i, j = text.find(start), text.find(end)
-    if i == -1 and j == -1:
+    """Replace the marked block; `(text, False)` when neither marker line is there."""
+    i, j = _marker_line(text, start), _marker_line(text, end)
+    if i is None and j is None:
         return text, False
-    if i == -1 or j == -1 or j < i:
+    if i is None or j is None or j[0] < i[0]:
         raise BrandError(f"README has a broken {start} / {end} pair; fix or remove it")
-    return text[:i] + block + text[j + len(end) :], True
+    return text[: i[0]] + block + text[j[1] :], True
 
 
 def rewrite_readme(text: str, header: str, footer: str) -> str:
@@ -356,7 +386,10 @@ def brand_clone(clone: Path, name: str, description: str, *, execute: bool) -> B
     if readme_path.is_file():
         old = readme_path.read_text(encoding="utf-8")
         new_text = rewrite_readme(old, header_block(name, description, digest), footer_block())
-        has = (HEADER_START in old, FOOTER_START in old)
+        has = (
+            _marker_line(old, HEADER_START) is not None,
+            _marker_line(old, FOOTER_START) is not None,
+        )
         notes.append(
             f"README.md: {'replace' if has[0] else 'insert at the top'} the header block, "
             f"{'replace' if has[1] else 'append at the end'} the footer block"

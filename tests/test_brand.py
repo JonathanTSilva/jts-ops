@@ -159,6 +159,35 @@ def test_markers_replaced_in_place_and_rest_untouched():
     assert rewrite_readme(out, header, footer) == out  # idempotent
 
 
+def test_markers_in_prose_inline_code_and_fences_are_ignored():
+    header, footer = blocks()
+    body = (
+        f"Put {HEADER_START} and {HEADER_END} around the header.\n\n"
+        f"Inline: `{FOOTER_START}` / `{FOOTER_END}`.\n\n"
+        f"```md\n{HEADER_START}\nold\n{HEADER_END}\n```\n\n"
+        f"~~~\n{FOOTER_START}\nold\n{FOOTER_END}\n~~~\n\n"
+        f"````\n```\n{HEADER_START}\n````\n"
+    )
+    out = rewrite_readme(body, header, footer)
+    assert out == f"{header}\n\n{body.rstrip()}\n\n{footer}\n"
+    assert rewrite_readme(out, header, footer) == out  # idempotent
+
+
+def test_real_marker_lines_win_over_mentions_and_fences():
+    header, footer = blocks()
+    text = (
+        f"```\n{HEADER_START}\nx\n{HEADER_END}\n```\n"
+        f"Use {HEADER_START} here.\n\n"
+        f"  {HEADER_START}  \nold\n\t{HEADER_END}\n\nbody\n\n{FOOTER_START}\nold\n{FOOTER_END}\n"
+    )
+    out = rewrite_readme(text, header, footer)
+    assert out == (
+        f"```\n{HEADER_START}\nx\n{HEADER_END}\n```\n"
+        f"Use {HEADER_START} here.\n\n  {header}\n\nbody\n\n{footer}\n"
+    )
+    assert rewrite_readme(out, header, footer) == out  # idempotent
+
+
 def test_placeholder_block_is_replaced():
     header, footer = blocks()
     placeholder = header_block("x", "y", "PLACEHOLDER")
