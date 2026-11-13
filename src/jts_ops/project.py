@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from jts_ops.gh import Gh, GhError, list_repos
+from jts_ops.gh import Gh, GhError, list_repos, printable
 from jts_ops.ideas import PROJECT_TITLE
 from jts_ops.inventory import InventoryEntry
 from jts_ops.standard import Standard
@@ -304,7 +304,7 @@ def ensure_project(
 def ensure_summary(project: Project | None, *, execute: bool) -> str:
     if project is None:
         return f"dry run: the {PROJECT_TITLE} project does not exist yet"
-    where = f" ({project.url})" if project.url else ""
+    where = f" ({printable(project.url)})" if project.url else ""
     return (
         f"{PROJECT_TITLE} project is set up{where}"
         if execute
@@ -377,18 +377,20 @@ def sync_project(
             continue
         area_option = area.option_id(entry.kind) if area and entry else None
         if entry is not None and area is not None and area_option is None:
-            note = f"no Area option for kind {entry.kind}: {name} is added without an Area"
+            note = printable(
+                f"no Area option for kind {entry.kind}: {name} is added without an Area"
+            )
             if note not in notes:
                 notes.append(note)
                 report(f"  warning: {note}")
         for item in _open_items(gh, name):
             node_id = str(item["node_id"])
-            label = f"{name}#{item['number']}"
+            label = printable(f"{name}#{item['number']}")
             if node_id in known:
                 present += 1
                 continue
             if not execute:
-                report(f"  would add: {label}: {item.get('title', '')}")
+                report(f"  would add: {label}: {printable(item.get('title', ''))}")
                 added += 1
                 continue
             try:
@@ -407,10 +409,12 @@ def sync_project(
             except (GhError, KeyError, TypeError) as err:
                 failed += 1
                 message = getattr(err, "message", None) or str(err)
-                report(f"  FAILED {label}: {(message.splitlines() or ['unknown error'])[0]}")
+                report(
+                    f"  FAILED {label}: {printable((message.splitlines() or ['unknown error'])[0])}"
+                )
                 continue
             known.add(node_id)
             count += 1
             added += 1
-            report(f"  added: {label}: {item.get('title', '')}")
+            report(f"  added: {label}: {printable(item.get('title', ''))}")
     return ProjectSyncResult(added, present, failed, count, tuple(notes))

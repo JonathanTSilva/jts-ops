@@ -14,7 +14,7 @@ from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
 from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.badges import write_badges
-from jts_ops.gh import Gh, GhError, MissingScopeError, fetch_state, list_repos
+from jts_ops.gh import Gh, GhError, MissingScopeError, fetch_state, list_repos, printable
 from jts_ops.ideas import run_ideas
 from jts_ops.inventory import InventoryEntry, load_inventory
 from jts_ops.migrate import (
@@ -399,7 +399,7 @@ def run_apply(
             continue
         print(name)
         for change in changes:
-            print(f"  {change.kind}: {change.reason}")
+            print(f"  {change.kind}: {printable(change.reason)}")
         for skip in skips:
             print(f"  {skip}" if skip.startswith("extra (kept)") else f"  skip: {skip}")
         total += len(changes)
@@ -407,7 +407,7 @@ def run_apply(
             for change, reason in execute(changes, gh):
                 failed += 1
                 failed_changes += 1
-                print(f"  FAILED {change.kind}: {reason}", file=sys.stderr)
+                print(f"  FAILED {change.kind}: {printable(reason)}", file=sys.stderr)
     if args.execute:
         print(f"applied {total - failed_changes} of {total} changes; {failed} failures")
     else:
@@ -511,7 +511,7 @@ def run_migrate(args: argparse.Namespace, gh: Gh | None = None) -> int:
     for step, error in execute_migration(steps, gh, args.projects_dir.expanduser()):
         if error is not None:
             failures += 1
-            print(f"  FAILED {step.repo} {step.action}: {error}", file=sys.stderr)
+            print(f"  FAILED {step.repo} {step.action}: {printable(error)}", file=sys.stderr)
     print(f"ran {len(steps) - failures} of {len(steps)} steps; {failures} failures")
     return 1 if failures or problems else 0
 
@@ -612,7 +612,7 @@ def run_sync(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_
     actions = plan_sync(remote, local, inventory, projects_dir, owner=std.owner, renamed=renamed)
     for action in actions:
         if action.kind not in SYNC_QUIET_KINDS:
-            print(f"  {action.kind}: {action.repo}: {action.detail}")
+            print(f"  {action.kind}: {action.repo}: {printable(action.detail)}")
     if args.dry_run:
         results: list[tuple[SyncAction, str | None]] = [(a, None) for a in actions]
     else:
@@ -621,7 +621,7 @@ def run_sync(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_
     for action, error in results:
         if error is not None and error != "skipped: earlier step failed":
             failures += 1
-            print(f"  FAILED {action.repo} {action.kind}: {error}", file=sys.stderr)
+            print(f"  FAILED {action.repo} {action.kind}: {printable(error)}", file=sys.stderr)
     summary = summarize(results, dry_run=args.dry_run)
     print(summary)
     flagged = any(

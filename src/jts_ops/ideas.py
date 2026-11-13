@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jts_ops.gh import Gh, GhError, list_repos
+from jts_ops.gh import Gh, GhError, list_repos, printable
 from jts_ops.inventory import InventoryEntry
 from jts_ops.vault import find_entry, read_properties, set_properties
 
@@ -209,13 +209,13 @@ def run_ideas(
     for idea in ideas:
         entry = find_entry(inv, idea.repo)
         if entry is None:
-            report(f"  refused: {idea.title}: {idea.repo} is not in the inventory")
+            report(f"  refused: {printable(idea.title)}: {idea.repo} is not in the inventory")
             refused += 1
             continue
         # Look the target up by both of its names; a repo GitHub does not list is refused.
         flags = [live[n.lower()] for n in {entry.name, entry.target} if n.lower() in live]
         if not flags:
-            report(f"  refused: {idea.title}: {entry.name} was not found on GitHub")
+            report(f"  refused: {printable(idea.title)}: {entry.name} was not found on GitHub")
             refused += 1
             continue
         # The target is private only when every source of truth says so.
@@ -225,13 +225,13 @@ def run_ideas(
             leaked = names_in("\n".join((idea.title, body, idea.text)), private)
             if leaked:
                 report(
-                    f"  refused: {idea.title}: names the private repo {leaked[0]}, "
+                    f"  refused: {printable(idea.title)}: names the private repo {leaked[0]}, "
                     f"but {entry.name} is public"
                 )
                 refused += 1
                 continue
         if not execute:
-            report(f"  would create: {entry.name}: {idea.title}")
+            report(f"  would create: {entry.name}: {printable(idea.title)}")
             created += 1
             continue
         try:
@@ -244,17 +244,26 @@ def run_ideas(
         except (GhError, KeyError, TypeError) as err:
             failed += 1
             message = getattr(err, "message", None) or str(err)
-            report(f"  FAILED {idea.title}: {(message.splitlines() or ['unknown error'])[0]}")
+            report(
+                f"  FAILED {printable(idea.title)}: "
+                f"{printable((message.splitlines() or ['unknown error'])[0])}"
+            )
             continue
         created += 1
-        report(f"  created: {entry.name}: {idea.title}: {url}")
+        report(f"  created: {entry.name}: {printable(idea.title)}: {url}")
         try:  # right away: the note must never be converted twice
             updated = set_properties(idea.text, {"github": "issued", "issue": url})
             idea.path.write_bytes(updated.encode("utf-8"))
         except OSError as err:
             failed += 1
-            report(f"  FAILED {idea.title}: issue {url} exists but the note was not updated: {err}")
+            report(
+                f"  FAILED {printable(idea.title)}: issue {url} exists but the note "
+                f"was not updated: {printable(err)}"
+            )
         problem = add_to_project(gh, str(issue.get("node_id", "")))
         if problem:
-            report(f"  warning: {idea.title}: not added to the {PROJECT_TITLE} project: {problem}")
+            report(
+                f"  warning: {printable(idea.title)}: not added to the {PROJECT_TITLE} "
+                f"project: {printable(problem)}"
+            )
     return IdeasResult(created, refused, len(left_out), failed)
