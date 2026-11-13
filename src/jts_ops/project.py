@@ -2,7 +2,9 @@
 
 `ensure` finds or creates the project and its fields: Status, Priority, Size and Area (single
 select) and Iteration (two weeks). It is idempotent and only ever adds: a missing option is
-appended to an existing field, an existing option is never removed. `sync` adds every open
+added to an existing field (the built-in Status included, which every project has and which is
+updated, never created), keeping the ids of the options that stay, and an existing option is
+never removed. `sync` adds every open
 issue and pull request of the active repos that is not already in the project; a new item gets
 Status=Inbox and an Area taken from the repo kind. Both are dry runs unless asked to execute.
 
@@ -25,6 +27,25 @@ ITERATION_DAYS = 14
 STATUS_FIELD = "Status"
 AREA_FIELD = "Area"
 INBOX = "Inbox"
+# Fields GitHub gives every project. They are updated, never created: the name is reserved
+# or already taken.
+BUILTIN_FIELDS = frozenset(
+    {
+        STATUS_FIELD,
+        "Title",
+        "Assignees",
+        "Labels",
+        "Linked pull requests",
+        "Milestone",
+        "Repository",
+        "Reviewers",
+        "Parent issue",
+        "Sub-issues progress",
+        "Tracks",
+        "Tracked by",
+        "Type",
+    }
+)
 
 # Single-select fields and their option colors; an Area option gets a color from the cycle.
 STATUS: tuple[tuple[str, str], ...] = (
@@ -197,8 +218,10 @@ def wanted_selects(std: Standard) -> dict[str, tuple[tuple[str, str], ...]]:
 def _merged_options(
     current: Sequence[Option], wanted: Sequence[tuple[str, str]]
 ) -> list[dict[str, str]]:
-    """The wanted options in order (an existing one keeps its own spelling, color and
-    description), then every other existing option: nothing is dropped."""
+    """The wanted options in order (an existing one keeps its id, color and description, and
+    takes the standard spelling, so the built-in "In Progress" becomes "In progress"), then
+    every other existing option: nothing is dropped. Passing the id is what stops GitHub from
+    reassigning it, so items keep their value."""
     by_name = {o.name.casefold(): o for o in current}
     merged: list[dict[str, str]] = []
     used: set[str] = set()
@@ -206,12 +229,17 @@ def _merged_options(
         have = by_name.get(name.casefold())
         used.add(name.casefold())
         merged.append(
-            {"name": have.name, "color": have.color, "description": have.description}
+            {
+                "id": have.id,
+                "name": name,
+                "color": have.color,
+                "description": have.description,
+            }
             if have
             else {"name": name, "color": color, "description": ""}
         )
     merged += [
-        {"name": o.name, "color": o.color, "description": o.description}
+        {"id": o.id, "name": o.name, "color": o.color, "description": o.description}
         for o in current
         if o.name.casefold() not in used
     ]
@@ -241,6 +269,10 @@ def ensure_project(
             project_id = str(made["createProjectV2"]["projectV2"]["id"])
             changed = True
         current: Mapping[str, Field] = {}
+        if execute:  # a new project already has GitHub's built-in fields, Status among them
+            _, created = load_project(gh)
+            if created is not None:
+                current = created.fields
     else:
         project_id = project.id
         current = project.fields
@@ -250,7 +282,12 @@ def ensure_project(
 
     for name, options in wanted_selects(std).items():
         existing = have(name)
-        if existing is None:
+        if existing is None and name.casefold() in {b.casefold() for b in BUILTIN_FIELDS}:
+            if project is None and not execute:  # the new project will bring it
+                report(f"  would add to built-in field {name}: {', '.join(o for o, _ in options)}")
+            else:
+                report(f"  warning: built-in field {name} not found; not creating it")
+        elif existing is None:
             report(f"  {verb}create field {name}: {', '.join(o for o, _ in options)}")
             if execute:
                 gh.graphql(
