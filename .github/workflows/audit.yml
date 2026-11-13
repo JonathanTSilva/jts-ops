@@ -21,7 +21,7 @@ jobs:
       contents: read
     env:
       JTS_STANDARD_DIR: ${{ github.workspace }}/standard
-      JTS_PRIVATE_INVENTORY: ${{ runner.temp }}/no-private-inventory.yml
+      JTS_PRIVATE_INVENTORY: /nonexistent/inventory.private.yml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
