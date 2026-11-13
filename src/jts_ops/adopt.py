@@ -25,7 +25,7 @@ from jts_ops.new import (
 )
 from jts_ops.standard import Standard
 
-TEMPLATE_REF = "v1.3.0"  # template tag with the README brand header and footer markers
+TEMPLATE_REF = "v1.3.1"  # template tag with the README brand header and footer markers
 ISSUE_TITLE = "Adopt the engineering standard"
 COMMIT_TITLE = "chore: adopt the engineering standard (#{n})"
 BRANCH = "chore/{n}-adopt-standard"
