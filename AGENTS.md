@@ -16,7 +16,7 @@ jts-ops: 🧠 CLI that audits and applies the GitHub standard across all reposit
 
 | Module | Does |
 |---|---|
-| `cli.py` | argparse entry point: `audit`, `apply`, `new`, `migrate`, `adopt`; prints, writes reports, sets exit codes |
+| `cli.py` | argparse entry point: `audit`, `apply`, `new`, `migrate`, `adopt`, `sync`; prints, writes reports, sets exit codes |
 | `standard.py` | Loads `standard.yml` and `labels.yml` into a `Standard` |
 | `inventory.py` | Merges the public `inventory.yml` with the optional private inventory |
 | `naming.py` | Repo name validation against the standard |
@@ -25,6 +25,7 @@ jts-ops: 🧠 CLI that audits and applies the GitHub standard across all reposit
 | `audit.py` | Pure checks of a `RepoState` against the standard, plus JSON and Markdown reports |
 | `apply.py` | `plan_changes` (pure) and `execute` (writes) for settings, topics, descriptions, labels and security |
 | `migrate.py` | `plan_migration` (pure) and `execute_migration` for the irreversible rename, archive and local-move steps, plus the banner and license loaders |
+| `sync.py` | `plan_sync` (pure) and `execute_sync` for mirroring GitHub into `~/Projects`: clone, move on archive or rename, fast-forward clean clones; dirty clones are only fetched |
 | `new.py` | The `new` flow: render the template, lock, commit, create the repo, apply |
 | `adopt.py` | The `adopt` flow: render the template onto an existing clone (skeleton off, README and any license kept), then issue, branch, commit, push and PR |
 

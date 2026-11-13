@@ -11,7 +11,6 @@ import hashlib
 import json
 import re
 import shutil
-import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,6 +19,7 @@ from typing import Any, Literal
 from jts_ops.apply import merged_topics
 from jts_ops.gh import Gh, GhError
 from jts_ops.inventory import InventoryEntry
+from jts_ops.new import Cmd, default_cmd
 from jts_ops.standard import Standard
 from jts_ops.state import RepoState
 
@@ -229,39 +229,35 @@ def _banner(step: Step, gh: Gh, repo: str) -> None:
     _contents(gh, repo, path, f"{banner}\n\n{current}", "docs: add archive banner", readme["sha"])
 
 
-def _git(cwd: Path, *args: str) -> str:
-    result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
+def run_git(cwd: Path, *args: str, run: Cmd = default_cmd) -> str:
+    result = run(["git", *args], cwd)
     if result.returncode != 0:
-        raise MigrationError(f"git {args[0]} failed in {cwd.name}: {result.stderr.strip()}")
+        command = next(a for a in args if not a.startswith("-"))
+        raise MigrationError(f"git {command} failed in {cwd.name}: {result.stderr.strip()}")
     return result.stdout.strip()
 
 
-def _unclean_reasons(clone: Path, default_branch: str | None) -> list[str]:
-    """Why a clone must not be moved.
+def unclean_reasons(clone: Path, default_branch: str | None, run: Cmd = default_cmd) -> list[str]:
+    """Why a clone must not be touched.
 
     Not the root of its own clone, no `origin`, uncommitted work, a side branch (the main clone
     must be on its default branch, the wiki clone just not detached), or unpushed commits.
+    With `default_branch=None` only a detached HEAD counts against the branch.
     """
-    top = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=clone,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    top = run(["git", "rev-parse", "--show-toplevel"], clone)
     if top.returncode != 0 or Path(top.stdout.strip()).resolve() != clone.resolve():
         return ["not the root of a git clone"]
     reasons: list[str] = []
-    if "origin" not in _git(clone, "remote").split():
+    if "origin" not in run_git(clone, "remote", run=run).split():
         reasons.append("no origin remote")
-    if _git(clone, "status", "--porcelain"):
+    if run_git(clone, "--no-optional-locks", "status", "--porcelain", run=run):
         reasons.append("uncommitted changes")
-    branch = _git(clone, "branch", "--show-current")
+    branch = run_git(clone, "branch", "--show-current", run=run)
     if default_branch is not None and branch != default_branch:
         reasons.append(f"on {branch or 'a detached HEAD'}, not {default_branch}")
     elif default_branch is None and not branch:
         reasons.append("detached HEAD")
-    if int(_git(clone, "rev-list", "--branches", "--not", "--remotes", "--count")) > 0:
+    if int(run_git(clone, "rev-list", "--branches", "--not", "--remotes", "--count", run=run)) > 0:
         reasons.append("unpushed commits")
     return reasons
 
@@ -279,13 +275,13 @@ def _local_move(payload: Mapping[str, Any], owner: str, projects_dir: Path) -> N
     # Check everything before touching anything, so a problem with either clone leaves both
     # exactly as they were.
     for source, destination, _, branch in moves:
-        reasons = _unclean_reasons(source, branch)
+        reasons = unclean_reasons(source, branch)
         if reasons:
             raise MigrationError(f"{source.name} is not clean: {', '.join(reasons)}")
         if destination != source and destination.exists():
             raise MigrationError(f"destination exists: {destination}")
     for source, _, url, _ in moves:
-        _git(source, "remote", "set-url", "origin", url)
+        run_git(source, "remote", "set-url", "origin", url)
     for source, destination, _, _ in moves:
         if destination != source:
             destination.parent.mkdir(parents=True, exist_ok=True)
