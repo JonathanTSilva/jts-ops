@@ -87,7 +87,7 @@ The public `inventory.yml` lists public repos only. Private repos live in the pr
 
 ## Automatic sync
 
-`contrib/systemd` has a user timer that runs `jts-ops sync --notify` hourly. Install it:
+`contrib/systemd` has a user timer that runs `jts-ops sync --notify`, then `vault-sync` and `project sync --execute`, hourly. Install it:
 
 ```sh
 cp contrib/systemd/* ~/.config/systemd/user/

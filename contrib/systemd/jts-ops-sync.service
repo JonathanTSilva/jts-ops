@@ -4,4 +4,6 @@ Description=Sync local jts-ops clones
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/bin
-ExecStart=%h/.local/bin/uv run --project %h/Projects/jts-ops jts-ops sync --notify --projects-dir %h/Projects
+ExecStart=-%h/.local/bin/uv run --project %h/Projects/jts-ops jts-ops sync --notify --projects-dir %h/Projects
+ExecStart=-%h/.local/bin/uv run --project %h/Projects/jts-ops jts-ops vault-sync --vault %h/Projects/jts-brain
+ExecStart=-%h/.local/bin/uv run --project %h/Projects/jts-ops jts-ops project sync --execute
