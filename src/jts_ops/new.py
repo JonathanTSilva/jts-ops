@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from jts_ops.brand import BrandError, brand_clone
 from jts_ops.gh import Gh, GhError
 from jts_ops.inventory import InventoryEntry
 from jts_ops.naming import check_name
@@ -203,6 +204,13 @@ def new_repo(
         featured=False,
         description=description,
     )
+
+    def brand() -> None:
+        try:
+            brand_clone(dst, name, description, execute=True)
+        except BrandError as err:
+            raise NewRepoError(f"step failed: brand: {err} (files left in place at {dst})") from err
+
     commit = f"git commit -m '{FIRST_COMMIT}'"
     plan: list[tuple[str, Callable[[], None]]] = [
         (f"copier copy {template} -> {dst}", sh(copier, None, "copier copy"))
@@ -212,6 +220,7 @@ def new_repo(
     if lock:
         plan.append((" ".join(lock), sh(lock, dst, " ".join(lock))))
     plan += [
+        ("brand: assets/brand header SVGs and the README header and footer blocks", brand),
         ("git init -b main", sh(["git", "init", "-b", "main"], dst, "git init")),
         ("git add -A", sh(["git", "add", "-A"], dst, "git add")),
         (commit, sh(["git", "commit", "-m", FIRST_COMMIT], dst, "git commit")),

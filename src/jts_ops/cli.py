@@ -14,6 +14,7 @@ from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
 from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.badges import write_badges
+from jts_ops.brand import BrandError, brand_clone
 from jts_ops.gh import Gh, GhError, MissingScopeError, fetch_state, list_repos, printable
 from jts_ops.ideas import run_ideas
 from jts_ops.inventory import InventoryEntry, load_inventory
@@ -158,6 +159,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     adopt.add_argument(
         "--execute", action="store_true", help="do it; without it only the steps are listed"
+    )
+    brand = commands.add_parser(
+        "brand",
+        help="write the README header SVGs into a clone and rewrite the README's brand blocks "
+        "(dry run unless --execute)",
+    )
+    brand.add_argument("repo", help="the repo's current name, as in the inventory")
+    brand.add_argument("--standard-dir", type=Path, default=None, help=standard_dir_help)
+    brand.add_argument(
+        "--projects-dir", type=Path, default=Path("~/Projects"), help="where local clones live"
+    )
+    brand.add_argument(
+        "--execute", action="store_true", help="write the files; without it only the plan is shown"
     )
     migrate = commands.add_parser(
         "migrate",
@@ -592,6 +606,33 @@ def run_adopt(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default
     return 0
 
 
+def run_brand(args: argparse.Namespace) -> int:
+    standard_dir: Path = args.standard_dir or default_standard_dir()
+    inventory = load_inventory(standard_dir)
+    entry = inventory.get(args.repo)
+    if entry is None:
+        print(f"jts-ops: {args.repo} is not in the inventory", file=sys.stderr)
+        return 2
+    clone: Path = args.projects_dir.expanduser() / args.repo
+    if not clone.is_dir():
+        print(f"jts-ops: no clone at {clone}", file=sys.stderr)
+        return 2
+    try:
+        result = brand_clone(clone, entry.target, entry.description, execute=args.execute)
+    except BrandError as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 2
+    for path in result.written:
+        print(f"  write {path}")
+    for path in result.removed:
+        print(f"  remove {path}")
+    for note in result.readme:
+        print(f"  {note}")
+    if not args.execute:
+        print("dry run: nothing was written (pass --execute to do it)")
+    return 0
+
+
 SYNC_QUIET_KINDS = frozenset({"fetch", "fast-forward"})
 
 
@@ -716,6 +757,8 @@ def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = def
         return run_new(args, gh, run)
     if args.command == "adopt":
         return run_adopt(args, gh, run)
+    if args.command == "brand":
+        return run_brand(args)
     if args.command == "audit":
         return run_audit(args, gh)
     if args.command == "badges":
