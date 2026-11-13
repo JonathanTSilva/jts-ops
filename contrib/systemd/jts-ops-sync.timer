@@ -1,0 +1,10 @@
+[Unit]
+Description=Run jts-ops sync hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
