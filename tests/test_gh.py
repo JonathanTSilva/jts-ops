@@ -146,6 +146,27 @@ def test_list_shaped_repo_is_completed_from_repo_endpoint():
     assert state.delete_branch_on_merge is True
 
 
+def test_merge_settings_hidden_from_a_read_only_token_are_not_flagged():
+    # Without push access the repo endpoint omits the merge settings; they are unknown, so
+    # they default to the standard values and cannot raise a finding.
+    hidden = {
+        k: v
+        for k, v in repo().items()
+        if k
+        not in {
+            "allow_squash_merge",
+            "allow_merge_commit",
+            "allow_rebase_merge",
+            "delete_branch_on_merge",
+        }
+    }
+    routes = happy_routes()
+    routes["/repos/ExampleOwner/example-repo"] = "repo_no_settings.json"
+    state = fetch_state(Gh("ExampleOwner", FakeRunner(routes)), hidden)
+    assert (state.allow_squash_merge, state.allow_merge_commit) == (True, False)
+    assert (state.allow_rebase_merge, state.delete_branch_on_merge) == (False, True)
+
+
 @pytest.mark.parametrize("status", [403, 404])
 def test_runs_unavailable_gives_no_ci_conclusion(status: int):
     # 404 also covers a repo with no ci.yml workflow.
