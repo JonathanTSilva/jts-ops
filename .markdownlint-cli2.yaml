@@ -4,3 +4,5 @@ config:
   MD041: false  # CLAUDE.md starts with an import, not a heading
   MD024:
     siblings_only: true  # repeated headings under different parents are fine
+  MD033:
+    allowed_elements: [picture, source, img, p, a]  # brand header and footer

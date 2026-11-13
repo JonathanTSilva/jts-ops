@@ -1,6 +1,9 @@
-# jts-ops
-
-🧠 CLI that audits and applies the GitHub standard across all repositories
+<!-- brand:header:start -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/header-eee9fd25-dark.svg">
+  <img alt="jts-ops: CLI that audits and applies the GitHub standard across all repositories" src="assets/brand/header-eee9fd25-light.svg" width="100%">
+</picture>
+<!-- brand:header:end -->
 
 <!-- badges:start -->
 [![Status](https://img.shields.io/badge/status-wip-yellow?style=flat-square)](https://www.repostatus.org/#wip)
@@ -114,3 +117,10 @@ See the [contributing guide](https://github.com/JonathanTSilva/.github/blob/main
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+<!-- brand:footer:start -->
+<p align="right"><a href="https://www.jontobias.com"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/JonathanTSilva/.github/main/assets/brand/jontobias-dark.svg">
+  <img alt="jontobias.com" src="https://raw.githubusercontent.com/JonathanTSilva/.github/main/assets/brand/jontobias-light.svg" width="200">
+</picture></a></p>
+<!-- brand:footer:end -->
