@@ -7,13 +7,19 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from jts_ops.state import LabelInfo, RepoState
 
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 _STATUS = re.compile(r"HTTP (\d{3})")
+# Every GraphQL write is an operation introduced by this keyword, so its absence proves a query.
+_MUTATION = re.compile(r"\bmutation\b", re.IGNORECASE)
+_SCOPE_PROBLEM = re.compile(
+    r"INSUFFICIENT_SCOPES|required scopes|read:project|missing.*scope", re.I
+)
+GRAPHQL = "graphql"
 
 
 def default_runner(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -46,11 +52,27 @@ class ReadOnlyError(GhError):
     """A non-GET call was attempted on a read-only `Gh`."""
 
 
+class MissingScopeError(GhError):
+    """The token lacks an OAuth scope the call needs (for Projects: `project`)."""
+
+
+def _is_graphql_query(path: str, fields: Mapping[str, Any] | None, body: Any) -> bool:
+    """True when this call is a GraphQL read: the endpoint is `graphql` and its query text has
+    no `mutation` keyword. Anything else that is not GET is a write."""
+    if path != GRAPHQL:
+        return False
+    text: Any = (fields or {}).get("query")
+    if text is None and isinstance(body, Mapping):
+        text = cast("Mapping[str, Any]", body).get("query")
+    return isinstance(text, str) and not _MUTATION.search(text)
+
+
 class Gh:
     def __init__(self, owner: str, runner: Runner = default_runner, read_only: bool = True) -> None:
         self.owner = owner
         self._runner = runner
-        # Structural dry-run guard: while set, `api` refuses every non-GET call.
+        # Structural dry-run guard: while set, `api` refuses every non-GET call, except a
+        # GraphQL query (a POST that cannot write).
         self.read_only = read_only
 
     def api(
@@ -67,7 +89,7 @@ class Gh:
         into one list. `body` is sent as a JSON request body (`gh api --input`), for
         payloads the `-f/-F` field flags cannot express.
         """
-        if self.read_only and method.upper() != "GET":
+        if self.read_only and method.upper() != "GET" and not _is_graphql_query(path, fields, body):
             raise ReadOnlyError(f"refusing {method} {path}: read-only mode")
         args = ["api", "-H", "Accept: application/vnd.github+json", "--method", method]
         if paginate:
@@ -92,6 +114,35 @@ class Gh:
         if paginate:
             return _flatten(data)
         return data
+
+    def graphql(self, query: str, variables: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Run a GraphQL operation and return its `data`. A mutation is refused while read-only.
+
+        Raises `MissingScopeError` when the token lacks a scope, `GhError` for any other
+        failure, including the `errors` GitHub can return with a 200.
+        """
+        try:
+            reply: dict[str, Any] | None = self.api(
+                GRAPHQL, "POST", body={"query": query, "variables": dict(variables or {})}
+            )
+        except ReadOnlyError:
+            raise
+        except GhError as err:
+            raise _classify(err.message, err.status) from err
+        if reply is None:
+            raise GhError("empty GraphQL reply")
+        errors: list[dict[str, Any]] = reply.get("errors") or []
+        if errors:
+            message = "; ".join(str(e.get("message", e)) for e in errors)
+            kinds = " ".join(str(e.get("type", "")) for e in errors)
+            raise _classify(f"{message} {kinds}", None)
+        return reply["data"]
+
+
+def _classify(message: str, status: int | None) -> GhError:
+    if _SCOPE_PROBLEM.search(message):
+        return MissingScopeError(message, status)
+    return GhError(message, status)
 
 
 def _flatten(pages: Any) -> list[Any]:
