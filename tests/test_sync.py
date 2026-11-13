@@ -23,7 +23,16 @@ from jts_ops.sync import (
 
 FIXTURES = Path(__file__).parent / "fixtures" / "standard"
 OWNER = "ExampleOwner"
-READ_ONLY_GIT = {"rev-parse", "remote", "status", "branch", "rev-list", "symbolic-ref", "config"}
+READ_ONLY_GIT = {
+    "rev-parse",
+    "remote",
+    "status",
+    "branch",
+    "rev-list",
+    "symbolic-ref",
+    "config",
+    "for-each-ref",
+}
 RENAMED = {"old-widget": f"{OWNER}/widget"}
 
 
@@ -868,6 +877,62 @@ def test_branch_merged_upstream_and_pruned_is_not_unpushed(world: World):
     info = inspect_clone(clone, default_cmd)
     assert not info.dirty
     assert world.sync([remote("ai-helper")]) == 0
+
+
+def _leftover_squash_merged_branch(world: World, clone: Path) -> None:
+    git(clone, "checkout", "-b", "feature")
+    (clone / "feat.txt").write_text("x", encoding="utf-8")
+    git(clone, "add", "feat.txt")
+    git(clone, "commit", "-m", "feature")
+    git(clone, "push", "-u", "origin", "feature")
+    git(clone, "checkout", "main")
+    # Squash-merged on GitHub: main gets different commits, the branch is deleted remotely.
+    world.push_commit("ai-helper", "squashed.txt", "x")
+    git(world.remotes / "ai-helper.git", "branch", "-D", "feature")
+    git(clone, "fetch", "--prune")
+
+
+def test_leftover_squash_merged_branch_does_not_block_fast_forward(
+    world: World, capsys: pytest.CaptureFixture[str]
+):
+    world.add_remote("ai-helper")
+    clone = world.clone("ai-helper", "ai-helper")
+    _leftover_squash_merged_branch(world, clone)
+    world.push_commit("ai-helper", "g.txt", "two")
+
+    assert not inspect_clone(clone, default_cmd).dirty
+    assert world.sync([remote("ai-helper")]) == 0
+
+    assert (clone / "g.txt").is_file()  # main fast-forwarded
+    assert git(clone, "branch", "--list", "feature")  # the branch is never deleted
+    out = capsys.readouterr().out
+    assert "skipped-dirty 0" in out
+    assert "stale local branches: 1 (safe to delete with `git branch -D`)" in out
+
+
+def test_unpushed_commit_on_default_branch_still_blocks_fast_forward(world: World):
+    world.add_remote("ai-helper")
+    clone = world.clone("ai-helper", "ai-helper")
+    _leftover_squash_merged_branch(world, clone)
+    _dirty_unpushed(clone)
+    world.push_commit("ai-helper", "g.txt", "two")
+
+    info = inspect_clone(clone, default_cmd)
+    assert info.dirty_reasons == ("unpushed commits",)
+    assert world.sync([remote("ai-helper")]) == 0
+    assert not (clone / "g.txt").exists()
+
+
+def test_dirty_working_tree_still_blocks_with_a_leftover_branch(world: World):
+    world.add_remote("ai-helper")
+    clone = world.clone("ai-helper", "ai-helper")
+    _leftover_squash_merged_branch(world, clone)
+    _dirty_modify(clone)
+    world.push_commit("ai-helper", "g.txt", "two")
+
+    assert inspect_clone(clone, default_cmd).dirty_reasons == ("uncommitted changes",)
+    assert world.sync([remote("ai-helper")]) == 0
+    assert not (clone / "g.txt").exists()
 
 
 def test_a_failed_main_move_also_skips_the_wiki_move(world: World):
