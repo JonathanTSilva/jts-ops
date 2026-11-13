@@ -77,6 +77,24 @@ jts-ops new my-tool --kind product --stack python --visibility public \
 
 The public `inventory.yml` lists public repos only. Private repos live in the private inventory file, which never goes in a public repository. jts-ops merges both; a missing private file means public entries only, and a name in both files is an error.
 
+## Automatic sync
+
+`contrib/systemd` has a user timer that runs `jts-ops sync --notify` hourly. Install it:
+
+```sh
+cp contrib/systemd/* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now jts-ops-sync.timer
+```
+
+Verify it:
+
+```sh
+systemd-analyze --user verify contrib/systemd/jts-ops-sync.service contrib/systemd/jts-ops-sync.timer
+systemctl --user list-timers | grep jts-ops
+journalctl --user -u jts-ops-sync -n 20
+```
+
 ## Docs
 
 The conventions this repository follows are in the [handbook](https://github.com/JonathanTSilva/.github/blob/main/handbook/README.md), including [repo anatomy](https://github.com/JonathanTSilva/.github/blob/main/handbook/repo-anatomy.md) and [branches and commits](https://github.com/JonathanTSilva/.github/blob/main/handbook/branches-and-commits.md).
