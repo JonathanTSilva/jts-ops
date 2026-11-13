@@ -437,7 +437,7 @@ def test_template_ref_defaults_to_the_pinned_tag(
         execute=True,
     )
     copier = cmd.find("copier")
-    assert copier[copier.index("--vcs-ref") + 1] == TEMPLATE_REF == "v1.2.0"
+    assert copier[copier.index("--vcs-ref") + 1] == TEMPLATE_REF == "v1.3.0"
 
 
 def test_readme_only_excluded_when_it_exists(
