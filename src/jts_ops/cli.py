@@ -13,6 +13,7 @@ from typing import Any
 from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
 from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
+from jts_ops.badges import write_badges
 from jts_ops.gh import Gh, GhError, fetch_state, list_repos
 from jts_ops.inventory import InventoryEntry, load_inventory
 from jts_ops.migrate import (
@@ -61,6 +62,14 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--json", type=Path, default=None, help="write the JSON report here")
     audit.add_argument("--markdown", type=Path, default=None, help="write the Markdown report here")
     audit.add_argument("--repo", default=None, help="audit only this repo (current name)")
+
+    badges = commands.add_parser(
+        "badges", help="write shields.io endpoint badges from a dashboard JSON"
+    )
+    badges.add_argument(
+        "--from", dest="source", type=Path, required=True, help="audit JSON (dashboard.json)"
+    )
+    badges.add_argument("--out", type=Path, required=True, help="directory for the badge files")
 
     apply = commands.add_parser(
         "apply",
@@ -219,7 +228,7 @@ def collect(
 ) -> list[Result]:
     """Fetch and audit repos. A repo that cannot be fetched gets one `fetch.error` finding."""
     results: list[Result] = []
-    for listed in list_repos(gh):
+    for listed in list_repos(gh, public_only):
         name: str = listed["name"]
         if only_repo is not None and name != only_repo:
             continue
@@ -259,6 +268,13 @@ def run_audit(args: argparse.Namespace, gh: Gh | None = None) -> int:
         f"CI green {s['ci_green']}/{s['ci_total']}"
     )
     return 0  # the audit reports, it does not gate
+
+
+def run_badges(args: argparse.Namespace) -> int:
+    dashboard = json.loads(args.source.read_text(encoding="utf-8"))
+    for path in write_badges(dashboard, args.out):
+        print(f"wrote {path}")
+    return 0
 
 
 def _existing_rulesets(gh: Gh, repo: str) -> list[dict[str, Any]]:
@@ -577,6 +593,8 @@ def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = def
         return run_adopt(args, gh, run)
     if args.command == "audit":
         return run_audit(args, gh)
+    if args.command == "badges":
+        return run_badges(args)
     if args.command == "apply":
         return run_apply(args, gh)
     if args.command == "migrate":
