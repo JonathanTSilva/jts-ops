@@ -11,7 +11,7 @@ from jts_ops.cli import main
 from jts_ops.gh import Gh
 from jts_ops.inventory import InventoryEntry
 from jts_ops.state import RepoState
-from jts_ops.vault import END, NOTES_DIR, START, RepoExtra, render_note
+from jts_ops.vault import END, NOTES_DIR, START, RepoExtra, note_filename, render_note
 
 FIXTURES = Path(__file__).parent / "fixtures"
 OWNER = "ExampleOwner"
@@ -254,6 +254,49 @@ def test_create_only_properties_are_not_overwritten():
     assert "language: pt-BR\n" in text
 
 
+def test_new_note_has_one_blank_line_after_the_heading():
+    text = render()
+    assert text is not None
+    assert text.split("---\n", 2)[2].startswith(f"# ai-helper\n\n{START}\n")
+
+
+def _body(heading_gap: str, nl: str = "\n") -> str:
+    return (
+        f"---{nl}type: repository{nl}repo: ai-helper{nl}---{nl}# ai-helper{nl}{heading_gap}"
+        f"{START}{nl}old{nl}{END}{nl}"
+    )
+
+
+def test_the_double_blank_after_the_heading_is_collapsed_once():
+    fixed = render(_body("\n\n"))
+    assert fixed is not None
+    assert f"# ai-helper\n\n{START}" in fixed
+    assert f"# ai-helper\n\n\n{START}" not in fixed
+    assert render(fixed) is None  # stable afterwards
+
+
+def test_the_double_blank_is_collapsed_in_a_crlf_note():
+    fixed = render(_body("\r\n\r\n", "\r\n"))
+    assert fixed is not None
+    assert f"# ai-helper\r\n\r\n{START}" in fixed
+
+
+def test_other_blank_runs_are_left_alone():
+    for gap in ("\n", "\n\n\n", "\nMy text.\n\n\n"):
+        fixed = render(_body(gap))
+        assert fixed is not None  # the generated block still changes
+        assert f"# ai-helper\n{gap}{START}" in fixed
+    other = f"---\nrepo: ai-helper\n---\n# Mine\n\nText\n\n\nMore\n\n{START}\nold\n{END}\n"
+    fixed = render(other)
+    assert fixed is not None
+    assert "Text\n\n\nMore" in fixed
+
+
+def test_note_filename_hides_nothing():
+    assert note_filename("ai-helper") == "ai-helper.md"
+    assert note_filename(".github") == "dot-github.md"
+
+
 # ------------------------------------------------------------------ the command
 
 
@@ -470,3 +513,73 @@ def test_missing_vault_is_an_error(
     )
     assert code == 2
     assert "no such vault" in capsys.readouterr().err
+
+
+def add_dot_repo(standard_dir: Path) -> None:
+    with (standard_dir / "inventory.yml").open("a", encoding="utf-8") as handle:
+        handle.write(
+            '\n- name: ".github"\n  target: ".github"\n  kind: special\n'
+            "  visibility: public\n  fate: keep\n  profile: special\n  license: mit\n"
+            '  status: active\n  featured: false\n  description: "Defaults"\n'
+        )
+
+
+def test_dot_repo_gets_a_note_that_obsidian_shows(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    add_dot_repo(standard_dir)
+    fake = FakeGithub([repo_json(".github")])
+    code, summary = run(standard_dir, vault, fake, capsys)
+    assert (code, summary) == (0, "created 1, updated 0, unchanged 0, renamed 0")
+    notes = vault / NOTES_DIR
+    assert [p.name for p in notes.iterdir()] == ["dot-github.md"]
+    assert "repo: .github\n" in (notes / "dot-github.md").read_text(encoding="utf-8")
+    code, summary = run(standard_dir, vault, fake, capsys)
+    assert summary == "created 0, updated 0, unchanged 1, renamed 0"
+
+
+def test_existing_hidden_note_is_renamed_keeping_its_body(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    add_dot_repo(standard_dir)
+    notes = vault / NOTES_DIR
+    notes.mkdir(parents=True)
+    (notes / ".github.md").write_text(
+        "---\ntype: repository\nrepo: .github\nmine: 1\n---\n# .github\n\nMy notes.\n",
+        encoding="utf-8",
+    )
+    fake = FakeGithub([repo_json(".github")])
+    code, summary = run(standard_dir, vault, fake, capsys)
+    assert (code, summary) == (0, "created 0, updated 0, unchanged 0, renamed 1")
+    assert not (notes / ".github.md").exists()
+    text = (notes / "dot-github.md").read_text(encoding="utf-8")
+    assert "mine: 1\n" in text
+    assert "My notes." in text
+    code, summary = run(standard_dir, vault, fake, capsys)
+    assert summary == "created 0, updated 0, unchanged 1, renamed 0"
+
+
+def test_hidden_note_dry_run_renames_nothing(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    add_dot_repo(standard_dir)
+    notes = vault / NOTES_DIR
+    notes.mkdir(parents=True)
+    (notes / ".github.md").write_text("---\nrepo: .github\n---\nkept\n", encoding="utf-8")
+    _, summary = run(standard_dir, vault, FakeGithub([repo_json(".github")]), capsys, "--dry-run")
+    assert summary == "dry run: created 0, updated 0, unchanged 0, renamed 1"
+    assert (notes / ".github.md").exists()
+    assert not (notes / "dot-github.md").exists()
+
+
+def test_hidden_note_onto_an_existing_dot_note_is_refused(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    add_dot_repo(standard_dir)
+    notes = vault / NOTES_DIR
+    notes.mkdir(parents=True)
+    (notes / ".github.md").write_text("---\nrepo: .github\n---\nold\n", encoding="utf-8")
+    (notes / "dot-github.md").write_text("---\nrepo: elsewhere\n---\nmine\n", encoding="utf-8")
+    code, _ = run(standard_dir, vault, FakeGithub([repo_json(".github")]), capsys)
+    assert code == 1
+    assert (notes / ".github.md").exists()

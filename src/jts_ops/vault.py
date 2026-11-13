@@ -12,6 +12,8 @@ into the note's new text, or None when nothing changed. The rules:
   formatting of properties `jts-ops` does not touch survives exactly.
 - A note is written only when its text actually changed, so there is no timestamp churn.
 - Nothing is deleted. A note whose repo was renamed is moved to the new name, body kept.
+- Obsidian hides files whose name starts with ".", so the note of `.github` is `dot-github.md`;
+  an existing `.github.md` is moved there, body kept.
 """
 
 import datetime
@@ -53,6 +55,8 @@ OWNED = (
 # Properties filled in when missing and never touched again.
 CREATE_ONLY = ("date", "tags", "language")
 
+# The new-note template used to leave two blank lines between the heading and the block.
+_DOUBLE_BLANK = re.compile(r"\A(# [^\r\n]*)(\r?\n)(?:\r?\n){2}(?=" + re.escape(START) + ")")
 _KEY = re.compile(r"^([A-Za-z_][\w-]*):(?:[ \t]|\r?\n?$)")
 _BOM = "﻿"
 
@@ -160,6 +164,39 @@ def _same(have: Any, want: Any) -> bool:
     if isinstance(have, list):
         have = [str(x) for x in cast(list[Any], have)]
     return type(have) is type(want) and have == want
+
+
+def note_filename(repo: str) -> str:
+    """The note's file name: Obsidian hides names starting with ".", so `.github` is
+    `dot-github.md`."""
+    return f"dot-{repo[1:]}.md" if repo.startswith(".") else f"{repo}.md"
+
+
+def read_properties(text: str) -> dict[str, Any]:
+    """The frontmatter properties of a note that can be read; unreadable ones are left out."""
+    props: dict[str, Any] = {}
+    for entry in _split(text).entries:
+        if entry.key is None:
+            continue
+        try:
+            props[entry.key] = _value_of(entry)
+        except ValueError:
+            continue
+    return props
+
+
+def set_properties(text: str, updates: Mapping[str, Any]) -> str:
+    """`text` with the given properties replaced in place, or appended when missing. Nothing
+    else in the note changes, not even the key order or the formatting of other properties."""
+    note = _split(text)
+    by_key = {e.key: e for e in note.entries if e.key is not None}
+    for key, value in updates.items():
+        lines = [f"{key}: {_dump(value)}{note.nl}"]
+        if key in by_key:
+            by_key[key].lines = lines
+        else:
+            note.entries.append(_Entry(key, lines))
+    return _join(note)
 
 
 def note_repo(text: str) -> str | None:
@@ -274,7 +311,7 @@ def render_note(
     }
     note = _split(existing_text if existing_text is not None else "")
     if existing_text is None:
-        note.body = f"# {state.name}{note.nl}{note.nl}"
+        note.body = f"# {state.name}{note.nl}"
     by_key = {e.key: e for e in note.entries if e.key is not None}
 
     def line(key: str, value: Any) -> list[str]:
@@ -298,6 +335,7 @@ def render_note(
             entry_ = _Entry(key, line(key, value))
             note.entries.append(entry_)
             by_key[key] = entry_
+    note.body = _DOUBLE_BLANK.sub(r"\1\2\2", note.body, count=1)
     note.body = _apply_block(note.body, _block(state, entry, extra, owner, status), note.nl)
     text = _join(note)
     return None if text == existing_text else text
@@ -353,7 +391,7 @@ def _write(path: Path, text: str) -> None:
     path.write_bytes(text.encode("utf-8"))
 
 
-def _find_entry(inv: Mapping[str, InventoryEntry], name: str) -> InventoryEntry | None:
+def find_entry(inv: Mapping[str, InventoryEntry], name: str) -> InventoryEntry | None:
     found = inv.get(name)
     return found or next((e for e in inv.values() if e.target == name), None)
 
@@ -399,7 +437,7 @@ def sync_vault(
     counts = {"created": 0, "updated": 0, "unchanged": 0, "renamed": 0, "failed": 0}
     for listed in sorted(remote, key=lambda r: str(r["name"])):
         name = str(listed["name"])
-        entry = _find_entry(inv, name)
+        entry = find_entry(inv, name)
         if entry is None:
             report(f"  skip: {name}: not in inventory")
             continue
@@ -410,12 +448,16 @@ def sync_vault(
             old_path: Path | None = None
             if path is None and name.lower() in moved_from:
                 old_path = notes[moved_from[name.lower()]]
-                path = notes_dir / f"{name}.md"
+                path = notes_dir / note_filename(name)
+                if path.exists():
+                    raise VaultError(f"cannot rename {old_path.name}: {path.name} exists")
+            if path is not None and path.name == f"{name}.md" and name.startswith("."):
+                old_path, path = path, path.with_name(note_filename(name))  # hidden by Obsidian
                 if path.exists():
                     raise VaultError(f"cannot rename {old_path.name}: {path.name} exists")
             source = old_path or path
             existing = _read(source) if source is not None else None
-            target = path or notes_dir / f"{name}.md"
+            target = path or notes_dir / note_filename(name)
             text = render_note(state, entry, existing, extra, owner=gh.owner, now=now, tags=tags)
             if old_path is not None:
                 report(f"  renamed: {old_path.name} -> {target.name}")
