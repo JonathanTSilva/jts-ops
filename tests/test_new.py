@@ -146,7 +146,7 @@ def test_existing_github_repo_aborts_before_any_command(std: Standard, tmp_path:
     [
         ({"license": "company"}, "company"),
         ({"license": "gpl"}, "license"),
-        ({"stack": "go"}, "stack"),
+        ({"stack": "cobol"}, "stack"),
         ({"visibility": "internal"}, "visibility"),
         ({"status": "archived"}, "status"),
         ({"description": "  "}, "description"),
