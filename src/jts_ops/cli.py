@@ -39,6 +39,7 @@ from jts_ops.new import (
 from jts_ops.standard import Standard, load_standard
 from jts_ops.state import RepoState
 from jts_ops.sync import SyncAction, execute_sync, plan_sync, resolve_renames, scan_local, summarize
+from jts_ops.vault import sync_vault
 
 STANDARD_DIR_ENV = "JTS_STANDARD_DIR"
 
@@ -192,6 +193,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--notify",
         action="store_true",
         help="desktop notification when something failed or a dirty or orphaned clone exists",
+    )
+    vault = commands.add_parser(
+        "vault-sync",
+        help="write one note per repo into the Obsidian vault and keep it current "
+        "(only files in the vault are written; nothing is committed)",
+    )
+    vault.add_argument("--standard-dir", type=Path, default=None, help=standard_dir_help)
+    vault.add_argument(
+        "--vault", type=Path, default=Path("~/Projects/jts-brain"), help="the Obsidian vault"
+    )
+    vault.add_argument(
+        "--dry-run", action="store_true", help="list what would happen; write no note"
     )
     return parser
 
@@ -589,6 +602,24 @@ def run_sync(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_
     return 1 if failures else 0
 
 
+def run_vault_sync(args: argparse.Namespace, gh: Gh | None = None) -> int:
+    standard_dir: Path = args.standard_dir or default_standard_dir()
+    std = load_standard(standard_dir)
+    inventory = load_inventory(standard_dir)
+    vault: Path = args.vault.expanduser()
+    if not vault.is_dir():
+        print(f"jts-ops: no such vault: {vault}", file=sys.stderr)
+        return 2
+    gh = gh or Gh(std.owner)  # read-only: vault-sync never writes to GitHub
+    try:
+        result = sync_vault(gh, vault, inventory, dry_run=args.dry_run, now=datetime.datetime.now())
+    except GhError as err:
+        print(f"jts-ops: cannot read GitHub: {err.message}", file=sys.stderr)
+        return 1
+    print(result.summary(dry_run=args.dry_run))
+    return 1 if result.failed else 0
+
+
 def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
     """Entry point for the `jts-ops` console script."""
     args = build_parser().parse_args(argv)
@@ -606,6 +637,8 @@ def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = def
         return run_migrate(args, gh)
     if args.command == "sync":
         return run_sync(args, gh, run)
+    if args.command == "vault-sync":
+        return run_vault_sync(args, gh)
     return 2  # unreachable: the subparser is required
 
 

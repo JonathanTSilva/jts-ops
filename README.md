@@ -79,6 +79,10 @@ jts-ops new my-tool --kind product --stack python --visibility public \
 
 The public `inventory.yml` lists public repos only. Private repos live in the private inventory file, which never goes in a public repository. jts-ops merges both; a missing private file means public entries only, and a name in both files is an error.
 
+## Vault notes
+
+`jts-ops vault-sync [--vault ~/Projects/jts-brain] [--dry-run]` writes one note per repo into `02-Areas/Open Source/Repositories/` of an Obsidian vault and keeps it current. It only reads GitHub and only writes files in the vault; it never commits. It rewrites the properties it owns (type, repo, url, visibility, kind, status, stack, topics, last_release, ci, open_issues, archived) and the block between `<!-- jts-ops:start -->` and `<!-- jts-ops:end -->`. Everything else in a note is left alone, a renamed repo's note is moved to the new name, and a file is written only when its content changed.
+
 ## Automatic sync
 
 `contrib/systemd` has a user timer that runs `jts-ops sync --notify` hourly. Install it:
