@@ -14,7 +14,7 @@ from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
 from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.badges import write_badges
-from jts_ops.gh import Gh, GhError, fetch_state, list_repos
+from jts_ops.gh import Gh, GhError, MissingScopeError, fetch_state, list_repos
 from jts_ops.ideas import run_ideas
 from jts_ops.inventory import InventoryEntry, load_inventory
 from jts_ops.migrate import (
@@ -37,6 +37,7 @@ from jts_ops.new import (
     default_cmd,
     new_repo,
 )
+from jts_ops.project import ProjectError, ensure_project, ensure_summary, sync_project
 from jts_ops.standard import Standard, load_standard
 from jts_ops.state import RepoState
 from jts_ops.sync import SyncAction, execute_sync, plan_sync, resolve_renames, scan_local, summarize
@@ -221,6 +222,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="create the issues and write `issue:` back into the notes (default: dry run)",
     )
+    project = commands.add_parser(
+        "project",
+        help="the Engineering GitHub Project: create its fields, add open issues and PRs "
+        "(dry run unless --execute)",
+    )
+    project_commands = project.add_subparsers(dest="project_command", required=True)
+    for name, text in (
+        ("ensure", "find or create the project and its fields; only ever adds options"),
+        ("sync", "add every open issue and PR of the active repos that the project lacks"),
+    ):
+        sub = project_commands.add_parser(name, help=text)
+        sub.add_argument("--standard-dir", type=Path, default=None, help=standard_dir_help)
+        sub.add_argument(
+            "--execute", action="store_true", help="write to GitHub (default: dry run)"
+        )
     return parser
 
 
@@ -653,6 +669,35 @@ def cmd_ideas(args: argparse.Namespace, gh: Gh | None = None) -> int:
     return 1 if result.failed else 0
 
 
+SCOPE_HELP = (
+    "the gh token lacks the `project` scope: run `gh auth refresh -s project` and try again"
+)
+
+
+def cmd_project(args: argparse.Namespace, gh: Gh | None = None) -> int:
+    standard_dir: Path = args.standard_dir or default_standard_dir()
+    std = load_standard(standard_dir)
+    inventory = load_inventory(standard_dir)
+    gh = gh or Gh(std.owner)
+    try:
+        if args.project_command == "ensure":
+            project = ensure_project(gh, std, execute=args.execute)
+            print(ensure_summary(project, execute=args.execute))
+            return 0
+        result = sync_project(gh, inventory, execute=args.execute)
+    except MissingScopeError:
+        print(f"jts-ops: {SCOPE_HELP}", file=sys.stderr)
+        return 1
+    except ProjectError as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 1
+    except GhError as err:
+        print(f"jts-ops: GitHub call failed: {err.message}", file=sys.stderr)
+        return 1
+    print(result.summary(execute=args.execute))
+    return 1 if result.failed else 0
+
+
 def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = default_cmd) -> int:
     """Entry point for the `jts-ops` console script."""
     args = build_parser().parse_args(argv)
@@ -674,6 +719,8 @@ def main(argv: Sequence[str] | None = None, gh: Gh | None = None, run: Cmd = def
         return run_vault_sync(args, gh)
     if args.command == "ideas":
         return cmd_ideas(args, gh)
+    if args.command == "project":
+        return cmd_project(args, gh)
     return 2  # unreachable: the subparser is required
 
 

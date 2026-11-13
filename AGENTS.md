@@ -16,7 +16,7 @@ jts-ops: 🧠 CLI that audits and applies the GitHub standard across all reposit
 
 | Module | Does |
 |---|---|
-| `cli.py` | argparse entry point: `audit`, `badges`, `apply`, `new`, `migrate`, `adopt`, `sync`, `vault-sync`, `ideas`; prints, writes reports, sets exit codes |
+| `cli.py` | argparse entry point: `audit`, `badges`, `apply`, `new`, `migrate`, `adopt`, `sync`, `vault-sync`, `ideas`, `project`; prints, writes reports, sets exit codes |
 | `standard.py` | Loads `standard.yml` and `labels.yml` into a `Standard` |
 | `inventory.py` | Merges the public `inventory.yml` with the optional private inventory |
 | `naming.py` | Repo name validation against the standard |
@@ -28,6 +28,7 @@ jts-ops: 🧠 CLI that audits and applies the GitHub standard across all reposit
 | `sync.py` | `plan_sync` (pure) and `execute_sync` for mirroring GitHub into `~/Projects`: clone, move on archive or rename, fast-forward clean clones; dirty clones are only fetched |
 | `vault.py` | `render_note` (pure) and `sync_vault` for `vault-sync`: one Obsidian note per repo, writing only the properties and generated block `jts-ops` owns; a repo whose name starts with `.` gets `dot-<rest>.md` |
 | `ideas.py` | `ideas`: vault notes with `github: idea` become issues; dry run by default, refuses a public target when the note names a private repo, writes `issue:` back |
+| `project.py` | `project ensure` and `project sync`: the user Project "Engineering" and its fields through GraphQL, then every open issue and PR of the active repos; dry run by default, never deletes an option, skips items already in the project. `Gh.graphql` refuses mutations while read-only; the token needs the `project` scope |
 | `new.py` | The `new` flow: render the template, lock, commit, create the repo, apply |
 | `adopt.py` | The `adopt` flow: render the template onto an existing clone (skeleton off, README and any license kept), then issue, branch, commit, push and PR |
 
