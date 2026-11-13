@@ -232,7 +232,8 @@ def _banner(step: Step, gh: Gh, repo: str) -> None:
 def run_git(cwd: Path, *args: str, run: Cmd = default_cmd) -> str:
     result = run(["git", *args], cwd)
     if result.returncode != 0:
-        raise MigrationError(f"git {args[0]} failed in {cwd.name}: {result.stderr.strip()}")
+        command = next(a for a in args if not a.startswith("-"))
+        raise MigrationError(f"git {command} failed in {cwd.name}: {result.stderr.strip()}")
     return result.stdout.strip()
 
 
@@ -249,7 +250,7 @@ def unclean_reasons(clone: Path, default_branch: str | None, run: Cmd = default_
     reasons: list[str] = []
     if "origin" not in run_git(clone, "remote", run=run).split():
         reasons.append("no origin remote")
-    if run_git(clone, "status", "--porcelain", run=run):
+    if run_git(clone, "--no-optional-locks", "status", "--porcelain", run=run):
         reasons.append("uncommitted changes")
     branch = run_git(clone, "branch", "--show-current", run=run)
     if default_branch is not None and branch != default_branch:

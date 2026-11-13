@@ -37,7 +37,7 @@ from jts_ops.new import (
 )
 from jts_ops.standard import Standard, load_standard
 from jts_ops.state import RepoState
-from jts_ops.sync import SyncAction, execute_sync, plan_sync, scan_local, summarize
+from jts_ops.sync import SyncAction, execute_sync, plan_sync, resolve_renames, scan_local, summarize
 
 STANDARD_DIR_ENV = "JTS_STANDARD_DIR"
 
@@ -535,16 +535,16 @@ def run_sync(args: argparse.Namespace, gh: Gh | None = None, run: Cmd = default_
         print(f"jts-ops: no such projects dir: {projects_dir}", file=sys.stderr)
         return 2
     gh = gh or Gh(std.owner)  # read-only: sync never writes to GitHub
+    local = scan_local(projects_dir, run)
     try:
         remote = list_repos(gh)
+        renamed = resolve_renames(gh, local, remote, std.owner)
     except GhError as err:
-        print(f"jts-ops: cannot list repos: {err.message}", file=sys.stderr)
+        print(f"jts-ops: cannot read GitHub: {err.message}", file=sys.stderr)
         if args.notify and not args.dry_run:
-            _notify(run, f"cannot list repos: {err.message}")
+            _notify(run, f"cannot read GitHub: {err.message}")
         return 1
-    actions = plan_sync(
-        remote, scan_local(projects_dir, run), inventory, projects_dir, owner=std.owner
-    )
+    actions = plan_sync(remote, local, inventory, projects_dir, owner=std.owner, renamed=renamed)
     for action in actions:
         if action.kind not in SYNC_QUIET_KINDS:
             print(f"  {action.kind}: {action.repo}: {action.detail}")

@@ -1,4 +1,6 @@
+import errno
 import json
+import os
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -22,6 +24,7 @@ from jts_ops.sync import (
 FIXTURES = Path(__file__).parent / "fixtures" / "standard"
 OWNER = "ExampleOwner"
 READ_ONLY_GIT = {"rev-parse", "remote", "status", "branch", "rev-list", "symbolic-ref", "config"}
+RENAMED = {"old-widget": f"{OWNER}/widget"}
 
 
 def url(name: str) -> str:
@@ -53,6 +56,21 @@ def local(projects: Path, key: str, origin_repo: str | None = None, **overrides:
     return LocalClone(**{**base, **overrides})
 
 
+def make_entry(name: str) -> InventoryEntry:
+    return InventoryEntry(
+        name=name,
+        target=name,
+        kind="product",
+        visibility="public",
+        fate="keep",
+        profile="active",
+        license="mit",
+        status="active",
+        featured=False,
+        description="Example",
+    )
+
+
 def kinds(actions: Sequence[SyncAction], repo: str | None = None) -> list[str]:
     return [a.kind for a in actions if repo is None or a.repo == repo]
 
@@ -66,8 +84,9 @@ def plan(
     remotes: list[dict[str, Any]],
     clones: dict[str, LocalClone],
     inv: dict[str, InventoryEntry],
+    renamed: dict[str, str] | None = None,
 ) -> list[SyncAction]:
-    return plan_sync(remotes, clones, inv, PROJECTS, owner=OWNER)
+    return plan_sync(remotes, clones, inv, PROJECTS, owner=OWNER, renamed=renamed)
 
 
 def test_new_repo_is_cloned(inv: dict[str, InventoryEntry]):
@@ -88,6 +107,14 @@ def test_clean_clone_on_default_branch_fast_forwards(inv: dict[str, InventoryEnt
 def test_clean_clone_on_a_side_branch_only_fetches(inv: dict[str, InventoryEntry]):
     clone = local(PROJECTS, "ai-helper", branch="feature")
     assert kinds(plan([remote("ai-helper")], {"ai-helper": clone}, inv)) == ["fetch"]
+
+
+def test_repo_missing_from_the_inventory_fails_closed(inv: dict[str, InventoryEntry]):
+    # A jts-brain-like repo with no inventory entry must never be merged.
+    clones = {"jts-brain-like": local(PROJECTS, "jts-brain-like")}
+    actions = plan([remote("jts-brain-like")], clones, {})
+    assert kinds(actions) == ["fetch", "skip"]
+    assert "not in inventory" in actions[1].detail
 
 
 def test_exempt_profile_only_fetches(inv: dict[str, InventoryEntry]):
@@ -117,7 +144,7 @@ def test_unarchived_repo_moves_back_out_of_the_archive(inv: dict[str, InventoryE
 
 def test_rename_moves_then_sets_url_then_updates(inv: dict[str, InventoryEntry]):
     clones = {"old-widget": local(PROJECTS, "old-widget")}
-    actions = plan([remote("widget")], clones, inv)
+    actions = plan([remote("widget")], clones, inv, RENAMED)
     assert kinds(actions) == ["move", "set-url", "fast-forward"]
     assert (actions[0].path, actions[0].target) == ("/p/old-widget", "/p/widget")
     assert (actions[1].path, actions[1].target) == ("/p/widget", url("widget"))
@@ -129,14 +156,52 @@ def test_rename_whose_target_folder_exists_touches_nothing(inv: dict[str, Invent
         "old-widget": local(PROJECTS, "old-widget"),
         "widget": local(PROJECTS, "widget", None, is_repo=False, origin=None),
     }
-    actions = plan([remote("widget")], clones, inv)
+    actions = plan([remote("widget")], clones, inv, RENAMED)
     assert [a.kind for a in actions if a.kind != "unmanaged"] == ["skip"]
     assert "exists" in actions[0].detail
 
 
 def test_renamed_origin_in_place_only_sets_the_url(inv: dict[str, InventoryEntry]):
     clones = {"widget": local(PROJECTS, "widget", "old-widget")}
-    assert kinds(plan([remote("widget")], clones, inv)) == ["set-url", "fast-forward"]
+    assert kinds(plan([remote("widget")], clones, inv, RENAMED)) == ["set-url", "fast-forward"]
+
+
+def test_rename_is_found_without_any_inventory_entry():
+    # GitHub, not the inventory, says old-widget is now widget: no duplicate clone.
+    new_name_only = {"widget": make_entry("widget")}
+    clones = {"old-widget": local(PROJECTS, "old-widget")}
+    actions = plan([remote("widget")], clones, new_name_only, RENAMED)
+    assert kinds(actions) == ["move", "set-url", "fast-forward"]
+    assert "clone" not in kinds(actions)
+    assert plan([remote("widget")], clones, {}, RENAMED)[0].kind == "move"
+
+
+def test_rename_matches_case_insensitively_and_by_origin_not_folder(
+    inv: dict[str, InventoryEntry],
+):
+    clones = {"my-folder": local(PROJECTS, "my-folder", "Old-Widget")}
+    actions = plan([remote("widget")], clones, inv, RENAMED)
+    assert kinds(actions) == ["move", "set-url", "fast-forward"]
+    assert actions[0].target == "/p/widget"
+
+
+def test_wiki_of_a_renamed_repo_follows_it(inv: dict[str, InventoryEntry]):
+    clones = {
+        "old-widget": local(PROJECTS, "old-widget"),
+        "old-widget.wiki": local(PROJECTS, "old-widget.wiki", default_branch="master"),
+    }
+    actions = plan([remote("widget", has_wiki=True)], clones, inv, RENAMED)
+    assert [(a.path, a.target) for a in actions if a.kind == "set-url"] == [
+        ("/p/widget", url("widget")),
+        ("/p/widget.wiki", url("widget.wiki")),
+    ]
+    assert "clone-wiki" not in kinds(actions)
+
+
+def test_a_repo_transferred_to_another_owner_is_unmanaged(inv: dict[str, InventoryEntry]):
+    clones = {"old-widget": local(PROJECTS, "old-widget")}
+    actions = plan([], clones, inv, {"old-widget": "Someone/old-widget"})
+    assert [(a.kind, a.detail) for a in actions] == [("unmanaged", "repo moved to another owner")]
 
 
 def test_origin_pointing_at_another_repo_is_left_alone(inv: dict[str, InventoryEntry]):
@@ -163,7 +228,7 @@ def test_dirty_clone_is_only_fetched_and_reported(
     inv: dict[str, InventoryEntry], overrides: dict[str, Any]
 ):
     clones = {"old-widget": local(PROJECTS, "old-widget", **overrides)}
-    actions = plan([remote("widget")], clones, inv)
+    actions = plan([remote("widget")], clones, inv, RENAMED)
     assert kinds(actions) == ["fetch", "skip"]
     assert actions[0].path == "/p/old-widget"  # not moved, not retargeted
     assert actions[1].detail.startswith("dirty:")
@@ -254,6 +319,9 @@ class World:
         self.standard_dir = standard_dir
         self.calls: list[list[str]] = []
         self.notifications: list[list[str]] = []
+        # GET /repos/<owner>/<old> answers: former name -> full_name; anything else is a 404.
+        self.renames: dict[str, str] = {}
+        self.api_error: str | None = None  # a repo name whose lookup fails with HTTP 500
 
     def add_remote(self, name: str) -> None:
         """A bare remote with one commit on main, reachable as the repo's ssh URL."""
@@ -288,7 +356,16 @@ class World:
     def sync(self, repos: list[dict[str, Any]], *flags: str) -> int:
         def gh_runner(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
             assert args[args.index("--method") + 1] == "GET"
-            return subprocess.CompletedProcess(args, 0, json.dumps([repos]), "")
+            path = next(a for a in args if a.startswith("/"))
+            if path.startswith("/user/repos"):
+                return subprocess.CompletedProcess(args, 0, json.dumps([repos]), "")
+            old = path.rsplit("/", 1)[1]
+            if old == self.api_error:
+                return subprocess.CompletedProcess(args, 1, "", "gh: Server Error (HTTP 500)")
+            if old in self.renames:
+                body = {"full_name": self.renames[old], "name": self.renames[old].split("/")[1]}
+                return subprocess.CompletedProcess(args, 0, json.dumps(body), "")
+            return subprocess.CompletedProcess(args, 1, "", "gh: Not Found (HTTP 404)")
 
         argv = [
             "sync",
@@ -301,7 +378,9 @@ class World:
         return main(argv, gh=Gh(OWNER, gh_runner), run=self.runner)
 
     def git_subcommands(self) -> set[str]:
-        return {c[1] for c in self.calls if c[0] == "git"}
+        return {
+            next(a for a in c[1:] if not a.startswith("-")) for c in self.calls if c[0] == "git"
+        }
 
 
 @pytest.fixture
@@ -357,6 +436,7 @@ def test_rename_moves_the_clone_and_sets_the_url(world: World):
     world.add_remote("widget")
     clone = world.clone("old-widget", "widget")
     git(clone, "remote", "set-url", "origin", url("old-widget"))
+    world.renames = RENAMED
     world.push_commit("widget", "g.txt", "two")
     git(world.remotes / "widget.git", "update-ref", "refs/heads/keep", "HEAD")  # unrelated ref
     # `old-widget` no longer exists as a bare remote, so fetching needs the new URL: the
@@ -377,6 +457,7 @@ def test_rename_whose_target_exists_touches_nothing(world: World):
     world.add_remote("widget")
     clone = world.clone("old-widget", "widget")
     git(clone, "remote", "set-url", "origin", url("old-widget"))
+    world.renames = RENAMED
     (world.projects / "widget").mkdir()
     (world.projects / "widget" / "mine.txt").write_text("keep", encoding="utf-8")
     world.calls.clear()
@@ -417,9 +498,19 @@ def _dirty_merge(clone: Path) -> None:
     (clone / ".git" / "MERGE_HEAD").write_text(git(clone, "rev-parse", "HEAD") + "\n")
 
 
+def _dirty_sequencer(clone: Path) -> None:
+    (clone / ".git" / "sequencer").mkdir()
+
+
+def _dirty_bisect(clone: Path) -> None:
+    (clone / ".git" / "BISECT_LOG").write_text("git bisect start\n", encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     "make_dirty",
     [
+        pytest.param(_dirty_sequencer, id="cherry-pick-sequence"),
+        pytest.param(_dirty_bisect, id="bisect"),
         pytest.param(_dirty_modify, id="uncommitted"),
         pytest.param(_dirty_untracked, id="untracked"),
         pytest.param(_dirty_detached, id="detached-head"),
@@ -504,10 +595,12 @@ def test_one_failing_fetch_does_not_stop_the_others(
     assert "failed 1" in captured.out
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
 def test_a_failed_move_skips_the_repos_later_steps(world: World):
     world.add_remote("widget")
     clone = world.clone("old-widget", "widget")
     git(clone, "remote", "set-url", "origin", url("old-widget"))
+    world.renames = RENAMED
     world.projects.chmod(0o500)  # the move cannot create the destination
     try:
         code = world.sync([remote("widget")])
@@ -523,6 +616,7 @@ def test_dry_run_changes_nothing_and_runs_only_git_reads(
     world.add_remote("fresh")
     world.add_remote("ai-helper")
     world.add_remote("old-widget")
+    world.renames = RENAMED
     helper = world.clone("ai-helper", "ai-helper")
     old = world.clone("old-widget", "old-widget")
     world.push_commit("ai-helper", "g.txt", "two")
@@ -588,7 +682,7 @@ def test_listing_failure_exits_1(world: World, capsys: pytest.CaptureFixture[str
         run=world.runner,
     )
     assert code == 1
-    assert "cannot list repos" in capsys.readouterr().err
+    assert "cannot read GitHub" in capsys.readouterr().err
 
 
 def test_missing_projects_dir_exits_2(world: World, capsys: pytest.CaptureFixture[str]):
@@ -667,3 +761,165 @@ def test_execute_rechecks_cleanliness_right_before_merging(world: World):
     assert error is not None
     assert (clone / "f.txt").read_text(encoding="utf-8") == "edited"
     assert not (clone / "g.txt").exists()
+
+
+# ------------------------------------------------------------------ review fixes
+
+
+def alias_remote(world: World, old: str, new: str) -> None:
+    """`old` also resolves to the bare remote of `new`, as GitHub redirects a renamed repo."""
+    subprocess.run(
+        ["cp", "-r", str(world.remotes / f"{new}.git"), str(world.remotes / f"{old}.git")],
+        check=True,
+    )
+
+
+def test_clone_of_a_repo_missing_from_the_inventory_is_never_merged(
+    world: World, capsys: pytest.CaptureFixture[str]
+):
+    world.add_remote("brain-like")
+    clone = world.clone("brain-like", "brain-like")
+    world.push_commit("brain-like", "g.txt", "two")
+    head = git(clone, "rev-parse", "HEAD")
+    assert world.sync([remote("brain-like")]) == 0
+    assert git(clone, "rev-parse", "HEAD") == head
+    assert git(clone, "rev-parse", "origin/main") != head
+    assert "not in inventory" in capsys.readouterr().out
+
+
+def test_rename_found_through_github_needs_no_inventory_entry(world: World):
+    world.add_remote("gizmo")
+    clone = world.clone("gizmo-old", "gizmo")
+    git(clone, "remote", "set-url", "origin", url("gizmo-old"))
+    alias_remote(world, "gizmo-old", "gizmo")
+    world.renames = {"gizmo-old": f"{OWNER}/gizmo"}
+    assert world.sync([remote("gizmo")]) == 0
+    assert sorted(p.name for p in world.projects.iterdir()) == ["gizmo"]  # no duplicate clone
+    assert git(world.projects / "gizmo", "config", "remote.origin.url") == url("gizmo")
+
+
+def test_a_clone_gone_from_github_is_orphaned_and_untouched(
+    world: World, capsys: pytest.CaptureFixture[str]
+):
+    world.add_remote("vanished")
+    world.clone("vanished", "vanished")
+    assert world.sync([]) == 0
+    assert (world.projects / "vanished").is_dir()
+    assert "orphaned 1" in capsys.readouterr().out
+
+
+def test_a_repo_transferred_away_is_unmanaged(world: World, capsys: pytest.CaptureFixture[str]):
+    world.add_remote("vanished")
+    world.clone("vanished", "vanished")
+    world.renames = {"vanished": "Someone/vanished"}
+    assert world.sync([]) == 0
+    out = capsys.readouterr().out
+    assert "unmanaged 1" in out
+    assert "orphaned 0" in out
+
+
+def test_a_github_lookup_error_aborts_the_run_with_exit_1(
+    world: World, capsys: pytest.CaptureFixture[str]
+):
+    world.add_remote("ai-helper")
+    world.add_remote("vanished")
+    helper = world.clone("ai-helper", "ai-helper")
+    world.clone("vanished", "vanished")
+    world.push_commit("ai-helper", "g.txt", "two")
+    world.api_error = "vanished"
+    world.calls.clear()
+    assert world.sync([remote("ai-helper")]) == 1
+    assert not (helper / "g.txt").exists()
+    assert not {"fetch", "merge", "clone"} & world.git_subcommands()
+    assert "cannot read GitHub" in capsys.readouterr().err
+
+
+def test_fast_forward_targets_origin_default_not_the_upstream_shorthand(world: World):
+    world.add_remote("ai-helper")
+    world.clone("ai-helper", "ai-helper")
+    world.push_commit("ai-helper", "g.txt", "two")
+    assert world.sync([remote("ai-helper")]) == 0
+    merges = [c for c in world.calls if c[:2] == ["git", "merge"]]
+    assert merges == [["git", "merge", "--ff-only", "origin/main"]]
+
+
+def test_status_does_not_take_optional_locks(world: World):
+    world.add_remote("ai-helper")
+    world.clone("ai-helper", "ai-helper")
+    assert world.sync([remote("ai-helper")], "--dry-run") == 0
+    statuses = [c for c in world.calls if "status" in c]
+    assert statuses
+    assert all("--no-optional-locks" in c for c in statuses)
+
+
+def test_branch_merged_upstream_and_pruned_is_not_unpushed(world: World):
+    world.add_remote("ai-helper")
+    clone = world.clone("ai-helper", "ai-helper")
+    git(clone, "checkout", "-b", "feature")
+    (clone / "feat.txt").write_text("x", encoding="utf-8")
+    git(clone, "add", "feat.txt")
+    git(clone, "commit", "-m", "feature")
+    git(clone, "push", "-u", "origin", "feature")
+    git(clone, "checkout", "main")
+    git(clone, "merge", "--ff-only", "feature")
+    git(clone, "push", "origin", "main")
+    git(world.remotes / "ai-helper.git", "branch", "-D", "feature")  # merged, then deleted
+    git(clone, "fetch", "--prune")
+    info = inspect_clone(clone, default_cmd)
+    assert not info.dirty
+    assert world.sync([remote("ai-helper")]) == 0
+
+
+def test_a_failed_main_move_also_skips_the_wiki_move(world: World):
+    world.add_remote("ai-helper")
+    world.add_remote("ai-helper.wiki")
+    main_clone = world.clone("ai-helper", "ai-helper")
+    wiki_clone = world.clone("ai-helper.wiki", "ai-helper.wiki")
+    (world.projects / "_archive" / "ai-helper").mkdir(parents=True)  # blocks the main move
+    actions = [
+        SyncAction(
+            "ai-helper",
+            "move",
+            "",
+            str(main_clone),
+            str(world.projects / "_archive" / "ai-helper"),
+        ),
+        SyncAction(
+            "ai-helper.wiki",
+            "move",
+            "",
+            str(wiki_clone),
+            str(world.projects / "_archive" / "ai-helper.wiki"),
+        ),
+    ]
+    results = execute_sync(actions, default_cmd, world.projects)
+    assert results[0][1] is not None
+    assert results[1][1] == "skipped: earlier step failed"
+    assert wiki_clone.is_dir()
+
+
+def test_a_move_across_devices_fails_cleanly(world: World, monkeypatch: pytest.MonkeyPatch):
+    world.add_remote("ai-helper")
+    clone = world.clone("ai-helper", "ai-helper")
+
+    def cross_device(src: object, dst: object) -> None:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr("jts_ops.sync.os.rename", cross_device)
+    action = SyncAction(
+        "ai-helper", "move", "", str(clone), str(world.projects / "_archive" / "ai-helper")
+    )
+    [(_, error)] = execute_sync([action], default_cmd, world.projects)
+    assert error is not None
+    assert clone.is_dir()
+
+
+def test_an_unreadable_folder_is_marked_dirty(tmp_path: Path):
+    def exploding(args: Sequence[str], cwd: Path | None) -> subprocess.CompletedProcess[str]:
+        raise PermissionError("denied")
+
+    folder = tmp_path / "locked"
+    folder.mkdir()
+    found = scan_local(tmp_path, exploding)
+    assert found["locked"].dirty
+    assert "cannot inspect" in found["locked"].dirty_reasons[0]
