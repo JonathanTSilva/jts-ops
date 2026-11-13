@@ -212,10 +212,17 @@ def run_ideas(
             report(f"  refused: {idea.title}: {idea.repo} is not in the inventory")
             refused += 1
             continue
+        # Look the target up by both of its names; a repo GitHub does not list is refused.
+        flags = [live[n.lower()] for n in {entry.name, entry.target} if n.lower() in live]
+        if not flags:
+            report(f"  refused: {idea.title}: {entry.name} was not found on GitHub")
+            refused += 1
+            continue
         # The target is private only when every source of truth says so.
-        target_private = entry.visibility == "private" and live.get(entry.name.lower(), True)
-        if not target_private:
-            leaked = names_in(idea.text, private)
+        body = issue_body(idea.text)
+        if not (entry.visibility == "private" and all(flags)):
+            # Scan exactly what will be sent, plus the whole note.
+            leaked = names_in("\n".join((idea.title, body, idea.text)), private)
             if leaked:
                 report(
                     f"  refused: {idea.title}: names the private repo {leaked[0]}, "
@@ -231,7 +238,7 @@ def run_ideas(
             issue = gh.api(
                 f"/repos/{gh.owner}/{entry.name}/issues",
                 "POST",
-                fields={"title": idea.title, "body": issue_body(idea.text)},
+                fields={"title": idea.title, "body": body},
             )
             url = str(issue["html_url"])
         except (GhError, KeyError, TypeError) as err:
