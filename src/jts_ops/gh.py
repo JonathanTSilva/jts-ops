@@ -172,10 +172,12 @@ def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
         topics=tuple(repo.get("topics") or ()),
         has_wiki=repo["has_wiki"],
         has_discussions=repo.get("has_discussions", False),
-        allow_squash_merge=repo["allow_squash_merge"],
-        allow_merge_commit=repo["allow_merge_commit"],
-        allow_rebase_merge=repo["allow_rebase_merge"],
-        delete_branch_on_merge=repo["delete_branch_on_merge"],
+        # A token without push access (GITHUB_TOKEN reading another repo) never sees the merge
+        # settings. Unknown settings default to the standard values so they cannot be flagged.
+        allow_squash_merge=repo.get("allow_squash_merge", True),
+        allow_merge_commit=repo.get("allow_merge_commit", False),
+        allow_rebase_merge=repo.get("allow_rebase_merge", False),
+        delete_branch_on_merge=repo.get("delete_branch_on_merge", True),
         default_branch=branch,
         license_spdx=license_info["spdx_id"] if license_info else None,
         files=files,

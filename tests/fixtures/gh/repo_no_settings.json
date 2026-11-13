@@ -1,0 +1,29 @@
+{
+  "id": 1000001,
+  "name": "example-repo",
+  "full_name": "ExampleOwner/example-repo",
+  "private": false,
+  "owner": {
+    "login": "ExampleOwner",
+    "type": "User"
+  },
+  "description": "Example repo used by the test suite",
+  "fork": false,
+  "archived": false,
+  "disabled": false,
+  "has_issues": true,
+  "has_wiki": false,
+  "has_discussions": true,
+  "has_pages": false,
+  "license": {
+    "key": "mit",
+    "name": "MIT License",
+    "spdx_id": "MIT"
+  },
+  "topics": [
+    "tool",
+    "example"
+  ],
+  "visibility": "public",
+  "default_branch": "main"
+}
