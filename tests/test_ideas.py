@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from jts_ops import ideas
 from jts_ops.cli import main
 from jts_ops.gh import Gh
 from jts_ops.ideas import extract_idea
@@ -36,7 +37,14 @@ def idea(
 class FakeGithub:
     """A fake `gh`: lists repos, creates issues and knows an Engineering project."""
 
-    def __init__(self, *, project: bool = True, project_add_fails: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        project: bool = True,
+        project_add_fails: bool = False,
+        listed: Sequence[dict[str, object]] | None = None,
+    ) -> None:
+        self.listed = listed
         self.project = project
         self.project_add_fails = project_add_fails
         self.calls: list[tuple[str, str]] = []  # (method, path)
@@ -57,7 +65,7 @@ class FakeGithub:
             return subprocess.CompletedProcess(args, 0, json.dumps(body), "")
 
         if path.startswith("/user/repos"):
-            repos: list[object] = [
+            repos: Sequence[object] = self.listed or [
                 {"name": "ai-helper", "private": False},
                 {"name": "secret-lab", "private": True},
             ]
@@ -322,3 +330,72 @@ def test_missing_vault_is_an_error(
     )
     assert code == 2
     assert "no such vault" in capsys.readouterr().err
+
+
+def test_the_title_is_scanned_too(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    # The note title is the file name; it is sent as the issue title but is not in the text.
+    put(vault, "Port of Secret-Lab", idea(body="# Port\n\n## Idea\n\nClean text.\n"))
+    fake = FakeGithub()
+    _, out = run(standard_dir, vault, fake, capsys, "--execute")
+    assert "refused: Port of Secret-Lab: names the private repo secret-lab" in out
+    assert not fake.issues
+
+
+def test_the_body_that_is_sent_is_scanned_too(
+    standard_dir: Path,
+    vault: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Whatever issue_body() returns is covered, even if it is not literally in the note text.
+    def leaky(text: str) -> str:
+        return "Clean text. secret-lab"
+
+    monkeypatch.setattr(ideas, "issue_body", leaky)
+    put(vault, "Clean", idea(body="# Clean\n\n## Idea\n\nClean text.\n"))
+    fake = FakeGithub()
+    _, out = run(standard_dir, vault, fake, capsys, "--execute")
+    assert "refused: Clean: names the private repo secret-lab" in out
+    assert not fake.issues
+
+
+def test_target_missing_from_the_live_listing_is_refused(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    put(vault, "Better retries", idea())
+    fake = FakeGithub(listed=[{"name": "secret-lab", "private": True}])
+    _, out = run(standard_dir, vault, fake, capsys, "--execute")
+    assert "refused: Better retries: ai-helper was not found on GitHub" in out
+    assert not fake.issues
+
+
+def test_a_private_target_missing_from_the_listing_is_refused_too(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    put(vault, "Inner", idea(repo="secret-lab", body="# Inner\n\n## Idea\n\nx\n"))
+    fake = FakeGithub(listed=[{"name": "ai-helper", "private": False}])
+    _, out = run(standard_dir, vault, fake, capsys, "--execute")
+    assert "refused: Inner: secret-lab was not found on GitHub" in out
+    assert not fake.issues
+
+
+def test_target_is_found_by_its_target_name_case_insensitively(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    # The inventory lists old-widget with target widget; GitHub already says Widget.
+    put(vault, "Widget idea", idea(repo="old-widget"))
+    fake = FakeGithub(listed=[{"name": "Widget", "private": False}, {"name": "x", "private": True}])
+    _, out = run(standard_dir, vault, fake, capsys)
+    assert "would create: old-widget: Widget idea" in out
+
+
+def test_live_public_overrides_an_inventory_that_says_private(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    # secret-lab is private in the inventory but public on GitHub: the stricter case applies.
+    put(vault, "Inner", idea(repo="secret-lab", body="# Inner\n\n## Idea\n\nUse secret-lab.\n"))
+    fake = FakeGithub(listed=[{"name": "secret-lab", "private": False}])
+    _, out = run(standard_dir, vault, fake, capsys)
+    assert "refused: Inner: names the private repo secret-lab" in out
