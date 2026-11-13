@@ -43,6 +43,12 @@ def audit_repo(state: RepoState, entry: InventoryEntry | None, std: Standard) ->
         add("inventory.missing", "error", "repo is not in the inventory")
         return found
 
+    wants_private = entry.visibility == "private"
+    # A `publish` fate is not executed yet, so the repo is still expected to be private.
+    if entry.fate != "publish" and state.private != wants_private:
+        now = "private" if state.private else "public"
+        add("visibility.mismatch", "error", f"repo is {now}, inventory says {entry.visibility}")
+
     profile = entry.profile
     kind = std.kinds.get(entry.kind)
     full = profile in ("active", "archived")
