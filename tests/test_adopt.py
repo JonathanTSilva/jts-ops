@@ -437,7 +437,7 @@ def test_template_ref_defaults_to_the_pinned_tag(
         execute=True,
     )
     copier = cmd.find("copier")
-    assert copier[copier.index("--vcs-ref") + 1] == TEMPLATE_REF == "v1.1.1"
+    assert copier[copier.index("--vcs-ref") + 1] == TEMPLATE_REF == "v1.2.0"
 
 
 def test_readme_only_excluded_when_it_exists(
@@ -516,7 +516,7 @@ def test_missing_tool_is_reported(std: Standard, inv: dict[str, InventoryEntry],
     [
         ("unknown-repo", {}, "not in the inventory"),
         ("hidden-notes", {}, "profile"),  # exempt profile: not adoptable
-        (CLONE, {"stack": "go"}, "stack"),
+        (CLONE, {"stack": "cobol"}, "stack"),
     ],
 )
 def test_rejects_unadoptable_repos_before_any_call(

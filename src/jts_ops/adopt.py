@@ -24,7 +24,7 @@ from jts_ops.new import (
 )
 from jts_ops.standard import Standard
 
-TEMPLATE_REF = "v1.1.1"  # template tag with the narrowed pre-commit agent permission
+TEMPLATE_REF = "v1.2.0"  # template tag with go, rust, c-cpp and latex and the opt-in suites
 ISSUE_TITLE = "Adopt the engineering standard"
 COMMIT_TITLE = "chore: adopt the engineering standard (#{n})"
 BRANCH = "chore/{n}-adopt-standard"

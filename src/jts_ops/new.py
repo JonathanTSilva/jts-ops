@@ -18,7 +18,7 @@ FIRST_COMMIT = "chore: initial commit from template-repo"
 COPIER_ENV = "JTS_COPIER"
 
 # The template's choices (Plan 1). `company` is never rendered from the template.
-STACKS = ("python", "node", "shell", "none")
+STACKS = ("python", "node", "shell", "go", "rust", "c-cpp", "latex", "none")
 VISIBILITIES = ("public", "private")
 LICENSES = ("mit", "cc-by-4.0", "mit+cc-by-4.0", "proprietary", "agpl-3.0")
 STATUSES = ("concept", "wip", "active", "inactive")

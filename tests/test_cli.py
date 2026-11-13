@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from jts_ops.cli import main
+from jts_ops.cli import build_parser, main
 from jts_ops.gh import Gh
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -186,3 +186,14 @@ def test_ci_style_dashboard_has_no_private_name(standard_dir: Path, tmp_path: Pa
         "ai-helper"
     ]
     assert not any("hidden-notes" in p or "ai-secret-unlisted" in p for p in fake.paths)
+
+
+@pytest.mark.parametrize("stack", ("go", "rust", "c-cpp", "latex"))
+def test_new_and_adopt_accept_the_template_v1_2_stacks(stack: str):
+    parser = build_parser()
+    new = parser.parse_args(
+        ["new", "x", "--kind", "product", "--stack", stack]
+        + ["--visibility", "public", "--license", "mit", "--description", "d"]
+    )
+    adopt = parser.parse_args(["adopt", "x", "--stack", stack])
+    assert new.stack == adopt.stack == stack
