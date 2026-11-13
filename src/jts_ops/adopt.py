@@ -36,7 +36,7 @@ AI_NOTE = "AI assistance: Claude Code, rendered by jts-ops adopt"
 RELEASE_PLEASE_FILES = ("release-please-config.json", ".release-please-manifest.json")
 _ISSUE_NUMBER = re.compile(r"/issues/(\d+)")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_CONFLICT = re.compile(r"^\s*conflict\s+(.+?)\s*$")
+_CONFLICT = re.compile(r"^\s*conflict\s+(.+)$")
 
 
 def _conflicts(output: str) -> list[str]:
@@ -44,8 +44,9 @@ def _conflicts(output: str) -> list[str]:
     found: list[str] = []
     for line in _ANSI.sub("", output).splitlines():
         match = _CONFLICT.match(line)
-        if match and match.group(1) not in found:
-            found.append(match.group(1))
+        path = match.group(1).strip() if match else ""
+        if path and path not in found:
+            found.append(path)
     return found
 
 

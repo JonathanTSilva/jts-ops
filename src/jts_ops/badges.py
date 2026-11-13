@@ -32,11 +32,19 @@ def build_badges(dashboard: dict[str, Any]) -> dict[str, Badge]:
 
 
 def write_badges(dashboard: dict[str, Any], out_dir: Path) -> list[Path]:
-    """Write the badge files into `out_dir` (created if needed) and return their paths."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+    """Write the badge files into `out_dir` (created if needed) and return their paths.
+
+    Raises ValueError when `out_dir` contains a `..` segment or a badge file would land outside it.
+    """
+    if ".." in out_dir.parts:
+        raise ValueError(f"output directory must not contain '..': {out_dir}")
+    base = out_dir.resolve()
+    base.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for name, badge in build_badges(dashboard).items():
-        path = out_dir / name
+        path = (base / name).resolve()
+        if not path.is_relative_to(base):
+            raise ValueError(f"badge file escapes the output directory: {name}")
         path.write_text(json.dumps(badge, indent=2) + "\n", encoding="utf-8")
         paths.append(path)
     return paths
