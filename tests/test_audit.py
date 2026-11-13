@@ -387,3 +387,41 @@ def test_only_errors_break_compliance(std: Standard, inv: dict[str, InventoryEnt
     finding = Finding(state.name, "x.y", severity, "m")  # pyright: ignore[reportArgumentType]
     report = build_report([result(state, inv["ai-helper"], [finding])], public_only=False)
     assert report.repos[0]["compliant"] is (severity != "error")
+
+
+def test_visibility_match_has_no_finding(std: Standard, inv: dict[str, InventoryEntry]):
+    public = entry(inv, visibility="public", fate="keep")
+    assert "visibility.mismatch" not in checks(audit_repo(good_state(), public, std))
+    secret = entry(inv, visibility="private", fate="keep")
+    private_state = good_state(private=True, license_spdx=None)
+    assert "visibility.mismatch" not in checks(audit_repo(private_state, secret, std))
+
+
+def test_visibility_mismatch_is_error(std: Standard, inv: dict[str, InventoryEntry]):
+    expects_public = entry(inv, visibility="public", fate="keep")
+    found = checks(audit_repo(good_state(private=True, license_spdx=None), expects_public, std))
+    assert found["visibility.mismatch"].severity == "error"
+    assert "private" in found["visibility.mismatch"].message
+    assert "public" in found["visibility.mismatch"].message
+
+
+def test_visibility_mismatch_skipped_for_publish_fate(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    pending = entry(inv, visibility="public", fate="publish")
+    found = checks(audit_repo(good_state(private=True, license_spdx=None), pending, std))
+    assert "visibility.mismatch" not in found
+
+
+def test_visibility_checked_for_every_profile(std: Standard, inv: dict[str, InventoryEntry]):
+    vault = entry(
+        inv,
+        name="jts-vault-example",
+        target="jts-vault-example",
+        profile="exempt",
+        kind="jts",
+        visibility="public",
+        fate="keep",
+    )
+    state = good_state(name="jts-vault-example", private=True, license_spdx=None)
+    assert "visibility.mismatch" in checks(audit_repo(state, vault, std))
