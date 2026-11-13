@@ -272,7 +272,12 @@ def run_audit(args: argparse.Namespace, gh: Gh | None = None) -> int:
 
 def run_badges(args: argparse.Namespace) -> int:
     dashboard = json.loads(args.source.read_text(encoding="utf-8"))
-    for path in write_badges(dashboard, args.out):
+    try:
+        written = write_badges(dashboard, args.out)
+    except ValueError as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 2
+    for path in written:
         print(f"wrote {path}")
     return 0
 

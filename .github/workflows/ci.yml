@@ -38,6 +38,18 @@ jobs:
       contents: read
     uses: JonathanTSilva/.github/.github/workflows/python.yml@v1
 
+  # Codecov through OIDC, public repos only. Never fails CI.
+  coverage:
+    needs: python
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    uses: JonathanTSilva/.github/.github/workflows/coverage.yml@v1
+    with:
+      artifact: coverage
+      flags: python
+
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
@@ -59,6 +71,7 @@ jobs:
       - docs
       - security
       - python
+      - coverage
       - release
     runs-on: ubuntu-latest
     permissions: {}

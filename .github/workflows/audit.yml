@@ -32,14 +32,14 @@ jobs:
           path: standard
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - run: uv sync --frozen --no-dev
+      - run: uv sync --frozen --no-dev --no-build-package pyyaml
       - name: Audit public repos and write badges
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir site
-          uv run jts-ops audit --public-only --json site/dashboard.json
-          uv run jts-ops badges --from site/dashboard.json --out site
+          uv run --frozen --no-sync jts-ops audit --public-only --json site/dashboard.json
+          uv run --frozen --no-sync jts-ops badges --from site/dashboard.json --out site
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site

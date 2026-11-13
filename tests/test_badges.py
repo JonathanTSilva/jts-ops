@@ -54,3 +54,11 @@ def test_cli_writes_both_files(tmp_path: Path):
 def test_write_badges_returns_paths(tmp_path: Path):
     paths = write_badges(dashboard(), tmp_path)
     assert [p.name for p in paths] == ["badge-compliance.json", "badge-ci.json"]
+
+
+def test_cli_rejects_parent_traversal_in_out(tmp_path: Path):
+    source = tmp_path / "dashboard.json"
+    source.write_text(json.dumps(dashboard()), encoding="utf-8")
+    out = tmp_path / "site" / ".." / "escaped"
+    assert main(["badges", "--from", str(source), "--out", str(out)]) == 2
+    assert not (tmp_path / "escaped").exists()

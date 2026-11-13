@@ -6,6 +6,8 @@
 [![Status](https://img.shields.io/badge/status-wip-yellow?style=flat-square)](https://www.repostatus.org/#wip)
 [![CI](https://img.shields.io/github/actions/workflow/status/JonathanTSilva/jts-ops/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/JonathanTSilva/jts-ops/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JonathanTSilva/jts-ops?style=flat-square)](https://github.com/JonathanTSilva/jts-ops/releases)
+[![Coverage](https://codecov.io/gh/JonathanTSilva/jts-ops/graph/badge.svg)](https://codecov.io/gh/JonathanTSilva/jts-ops)
+[![Quality](https://sonarcloud.io/api/project_badges/measure?project=JonathanTSilva_jts-ops&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=JonathanTSilva_jts-ops)
 [![Scorecard](https://img.shields.io/ossf-scorecard/github.com/JonathanTSilva/jts-ops?style=flat-square&label=scorecard)](https://scorecard.dev/viewer/?uri=github.com/JonathanTSilva/jts-ops)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Codespaces](https://img.shields.io/badge/codespaces-open-181717?style=flat-square&logo=github)](https://codespaces.new/JonathanTSilva/jts-ops)

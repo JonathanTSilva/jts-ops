@@ -1,12 +1,18 @@
 # Changes here will be overwritten by Copier. Re-sync with `copier update`.
-_commit: v1.1.1
+_commit: v1.2.0
 _src_path: gh:JonathanTSilva/template-repo
+bench: false
 description: 🧠 CLI that audits and applies the GitHub standard across all repositories
+e2e: false
 has_release: true
 kind: jts
 license: mit
+lighthouse: false
+load: false
 repo_name: jts-ops
+reports: false
 skeleton: false
+sonar: true
 stack: python
 status: wip
 visibility: public
