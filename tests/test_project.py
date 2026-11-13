@@ -50,7 +50,9 @@ class FakeProjects:
         self.fields: list[dict[str, Any]] = []
         if project:  # what GitHub gives a new project: a Status with its three defaults
             self.fields.append(self._select("Status", ["Todo", "In Progress", "Done", "Parked"]))
+        self.default_status = ["Todo", "In Progress", "Done"]
         self.items: list[dict[str, Any]] = []
+        self.updates: list[list[dict[str, Any]]] = []  # the options of each field update
         self.requests: list[str] = []  # the GraphQL documents sent, in order
 
     def _id(self, prefix: str) -> str:
@@ -127,8 +129,11 @@ class FakeProjects:
             return {"node": {"items": {"pageInfo": info, "nodes": nodes}}}
         if "createProjectV2(" in query:
             self.has_project = True
+            self.fields.append(self._select("Status", self.default_status))  # built in
             return {"createProjectV2": {"projectV2": {"id": "P_1"}}}
         if "dataType: SINGLE_SELECT" in query:
+            if any(f["name"].casefold() == v["name"].casefold() for f in self.fields):
+                raise GhError("Name cannot have a reserved value, Name has already been taken")
             self.fields.append(self._select(v["name"], [o["name"] for o in v["options"]]))
             return {"createProjectV2Field": {}}
         if "dataType: ITERATION" in query:
@@ -144,12 +149,18 @@ class FakeProjects:
             return {"createProjectV2Field": {}}
         if "updateProjectV2Field(" in query:
             f = next(f for f in self.fields if f["id"] == v["fieldId"])
-            old = {o["name"]: o for o in f["options"]}
+            old = {o["id"]: o for o in f["options"]}
+            # like GitHub: an option passed with its id keeps it, any other gets a new one
             f["options"] = [
-                old.get(o["name"])
-                or {"id": self._id("O"), "name": o["name"], "color": o["color"], "description": ""}
+                {
+                    "id": o["id"] if o.get("id") in old else self._id("O"),
+                    "name": o["name"],
+                    "color": o["color"],
+                    "description": o["description"],
+                }
                 for o in v["options"]
             ]
+            self.updates.append(v["options"])
             return {"updateProjectV2Field": {}}
         if "addProjectV2ItemById" in query:
             found: dict[str, Any] | None = next(
@@ -259,11 +270,61 @@ def test_ensure_adds_missing_options_and_keeps_existing_ones(std: Standard):
     todo = fake.option_id("Status", "Todo")
     ensure_project(gh_for(fake), std, execute=True, report=quiet)
     names = fake.option_names("Status")
-    assert names[:5] == ["Inbox", "Todo", "In Progress", "Blocked", "Done"]  # no duplicate
+    assert names[:5] == ["Inbox", "Todo", "In progress", "Blocked", "Done"]  # no duplicate
     assert "Parked" in names  # never deleted
     assert fake.option_id("Status", "Todo") == todo  # kept as it was
     assert len([n for n in names if n.casefold() == "in progress"]) == 1
     assert len([f for f in fake.fields if f["name"] == "Status"]) == 1
+
+
+def test_ensure_updates_the_builtin_status_of_a_new_project(std: Standard):
+    fake = FakeProjects()
+    default_ids: dict[str, str] = {}
+    original = fake.graphql
+
+    def spy(query: str, v: dict[str, Any]) -> dict[str, Any]:
+        out = original(query, v)
+        if "createProjectV2(" in query:
+            default_ids.update({o["name"]: o["id"] for o in fake.field("Status")["options"]})
+        return out
+
+    fake.graphql = spy  # type: ignore[method-assign]
+    lines: list[str] = []
+    ensure_project(gh_for(fake), std, execute=True, report=lines.append)
+    assert len([f for f in fake.fields if f["name"] == "Status"]) == 1
+    assert fake.option_names("Status") == [n for n, _ in STATUS]
+    for name, old in (("Todo", "Todo"), ("In progress", "In Progress"), ("Done", "Done")):
+        assert fake.option_id("Status", name) == default_ids[old]  # items keep their Status
+    assert not any("create field Status" in line for line in lines)
+    assert any("add to field Status" in line for line in lines)
+
+
+def test_ensure_dry_run_of_a_new_project_does_not_create_status(std: Standard):
+    lines: list[str] = []
+    ensure_project(gh_for(FakeProjects()), std, execute=False, report=lines.append)
+    assert not any("create field Status" in line for line in lines)
+    assert any("built-in field Status" in line for line in lines)
+
+
+def test_ensure_never_creates_a_builtin_field_that_is_missing(std: Standard):
+    fake = FakeProjects(project=True)
+    fake.fields.clear()  # a project without its Status
+    lines: list[str] = []
+    ensure_project(gh_for(fake), std, execute=True, report=lines.append)
+    assert not any(f["name"] == "Status" for f in fake.fields)
+    assert any("not creating it" in line for line in lines)
+
+
+def test_update_passes_the_id_of_every_option_that_stays(std: Standard):
+    fake = FakeProjects(project=True)
+    ids = {o["name"]: o["id"] for o in fake.field("Status")["options"]}
+    ensure_project(gh_for(fake), std, execute=True, report=quiet)
+    sent = fake.updates[0]
+    by_name = {o["name"]: o.get("id") for o in sent}
+    assert by_name["Todo"] == ids["Todo"]
+    assert by_name["In progress"] == ids["In Progress"]
+    assert by_name["Parked"] == ids["Parked"]
+    assert by_name["Inbox"] is None  # new, so GitHub assigns the id
 
 
 def test_wanted_area_options_come_from_the_standard(std: Standard):
