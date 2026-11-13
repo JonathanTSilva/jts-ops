@@ -19,6 +19,11 @@ _EXEMPT_CHECKS = ("inventory.missing", "description.emoji", "topics.kind", "topi
 _SPECIAL_CHECKS = ("inventory.missing", "license.missing", "wiki.enabled")
 
 
+# A Copier template never carries its own answers file.
+COPIER_ANSWERS = ".copier-answers.yml"
+_NO_ANSWERS_KINDS = ("template",)
+
+
 @dataclass(frozen=True)
 class Finding:
     repo: str
@@ -54,7 +59,7 @@ def audit_repo(state: RepoState, entry: InventoryEntry | None, std: Standard) ->
     if full:
         for problem in check_name(state.name, entry.kind, std):
             add("name.convention", "error", problem)
-        if state.ci_conclusion == "failure":
+        if profile != "archived" and state.ci_conclusion == "failure":
             add("ci.failing", "error", "latest CI run on the default branch failed")
 
     if profile != "exempt" and state.has_wiki:
@@ -65,7 +70,7 @@ def audit_repo(state: RepoState, entry: InventoryEntry | None, std: Standard) ->
         add("license.missing", "error", "public repo has no detected license")
 
     if profile == "active":
-        _audit_active(state, std, add)
+        _audit_active(state, entry.kind, std, add)
 
     if profile == "archived":
         if not state.archived:
@@ -78,11 +83,13 @@ def audit_repo(state: RepoState, entry: InventoryEntry | None, std: Standard) ->
     return sorted(found, key=lambda f: (f.check, f.message))
 
 
-def _audit_active(state: RepoState, std: Standard, add: Any) -> None:
+def _audit_active(state: RepoState, kind: str, std: Standard, add: Any) -> None:
     if state.files is None:
         add("files.required", "info", "no file listing (empty or truncated tree); skipped")
     else:
         for path in std.required_files.get("active", ()):
+            if path == COPIER_ANSWERS and kind in _NO_ANSWERS_KINDS:
+                continue
             if path not in state.files:
                 add("files.required", "error", f"missing {path}")
 
