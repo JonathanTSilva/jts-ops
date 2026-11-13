@@ -32,7 +32,7 @@ class FakeGithub:
         def ok(body: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(args, 0, json.dumps(body), "")
 
-        if path.startswith("/user/repos"):
+        if path.startswith(("/user/repos", "/users/ExampleOwner/repos")):
             page: list[object] = list(self.repos)
             return ok([page])
         name = path.split("/")[3]
@@ -136,3 +136,53 @@ def test_standard_dir_defaults_to_env(
     monkeypatch.setenv("JTS_STANDARD_DIR", str(standard_dir))
     fake = FakeGithub([repo_json("ai-helper", False)], broken=set())
     assert main(["audit"], Gh("ExampleOwner", fake)) == 0
+
+
+def test_public_only_lists_through_the_public_users_endpoint(standard_dir: Path, tmp_path: Path):
+    # A GITHUB_TOKEN cannot call /user/repos, and the public listing cannot see private repos.
+    fake = FakeGithub([repo_json("ai-helper", False)], broken=set())
+    main(["audit", "--standard-dir", str(standard_dir), "--public-only"], Gh("ExampleOwner", fake))
+    assert fake.paths[0] == "/users/ExampleOwner/repos?type=owner&per_page=100"
+    assert not any(p.startswith("/user/") for p in fake.paths)
+
+
+def test_ci_style_dashboard_has_no_private_name(standard_dir: Path, tmp_path: Path):
+    # CI has no private inventory (the autouse fixture points it at a missing file), and the
+    # token may see private repos anyway. Neither the JSON, the Markdown nor the badges may
+    # carry a private name, listed in the private inventory or not.
+    fake = FakeGithub(
+        [
+            repo_json("ai-helper", False),
+            repo_json("hidden-notes", True),
+            repo_json("ai-secret-unlisted", True),
+        ],
+        broken=set(),
+    )
+    dashboard, md, badges = tmp_path / "dashboard.json", tmp_path / "a.md", tmp_path / "out"
+    assert (
+        main(
+            [
+                "audit",
+                "--standard-dir",
+                str(standard_dir),
+                "--public-only",
+                "--json",
+                str(dashboard),
+                "--markdown",
+                str(md),
+            ],
+            Gh("ExampleOwner", fake),
+        )
+        == 0
+    )
+    assert main(["badges", "--from", str(dashboard), "--out", str(badges)]) == 0
+    written = [dashboard, md, *badges.iterdir()]
+    assert {p.name for p in badges.iterdir()} == {"badge-compliance.json", "badge-ci.json"}
+    for path in written:
+        text = path.read_text(encoding="utf-8")
+        assert "hidden-notes" not in text
+        assert "ai-secret-unlisted" not in text
+    assert [r["name"] for r in json.loads(dashboard.read_text(encoding="utf-8"))["repos"]] == [
+        "ai-helper"
+    ]
+    assert not any("hidden-notes" in p or "ai-secret-unlisted" in p for p in fake.paths)

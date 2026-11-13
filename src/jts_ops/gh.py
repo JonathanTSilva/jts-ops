@@ -104,7 +104,11 @@ def _flatten(pages: Any) -> list[Any]:
     return out
 
 
-def list_repos(gh: Gh) -> list[dict[str, Any]]:
+def list_repos(gh: Gh, public_only: bool = False) -> list[dict[str, Any]]:
+    """List the owner's repos. `public_only` uses the public listing, which a `GITHUB_TOKEN`
+    can call (`/user/repos` needs a user token) and which cannot return private repos."""
+    if public_only:
+        return gh.api(f"/users/{gh.owner}/repos?type=owner&per_page=100", paginate=True)
     return gh.api("/user/repos?affiliation=owner&per_page=100", paginate=True)
 
 

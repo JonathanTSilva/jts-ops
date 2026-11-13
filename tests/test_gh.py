@@ -210,6 +210,12 @@ def test_paginate_flag_passed_and_pages_flattened():
     assert [r["name"] for r in repos] == ["example-repo", "example-second"]
 
 
+def test_list_repos_public_only_uses_the_users_endpoint():
+    runner = FakeRunner({"/users/ExampleOwner/repos": "repos_slurp.json"})
+    list_repos(Gh("ExampleOwner", runner), public_only=True)
+    assert "/users/ExampleOwner/repos?type=owner&per_page=100" in runner.calls[0]
+
+
 def test_api_passes_method_and_fields():
     runner = FakeRunner({"/repos/x": "runs_empty.json"})
     Gh("ExampleOwner", runner, read_only=False).api(
