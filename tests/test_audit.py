@@ -127,6 +127,28 @@ def test_files_required(std: Standard, inv: dict[str, InventoryEntry]):
     ]
 
 
+def test_copier_answers_required_except_for_template_kind(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    needs_answers = replace(
+        std,
+        required_files={
+            **std.required_files,
+            "active": (*std.required_files["active"], ".copier-answers.yml"),
+        },
+    )
+    messages = [
+        f.message
+        for f in audit_repo(good_state(), inv["ai-helper"], needs_answers)
+        if f.check == "files.required"
+    ]
+    assert messages == ["missing .copier-answers.yml"]
+    template = entry(inv, kind="template")
+    assert [
+        f for f in audit_repo(good_state(), template, needs_answers) if f.check == "files.required"
+    ] == []
+
+
 def test_settings_merge(std: Standard, inv: dict[str, InventoryEntry]):
     state = good_state(allow_merge_commit=True, delete_branch_on_merge=False)
     found = checks(audit_repo(state, inv["ai-helper"], std))
@@ -143,6 +165,17 @@ def test_ci_failing(std: Standard, inv: dict[str, InventoryEntry]):
     for conclusion in ("success", None, "cancelled"):
         ok = checks(audit_repo(good_state(ci_conclusion=conclusion), inv["ai-helper"], std))
         assert "ci.failing" not in ok
+
+
+def test_ci_failing_ignored_for_archived_profile(std: Standard, inv: dict[str, InventoryEntry]):
+    state = good_state(
+        topics=("kind-ai", "status-archived"),
+        archived=True,
+        readme=BANNER,
+        ci_conclusion="failure",
+    )
+    found = checks(audit_repo(state, archived_entry(inv, fate="archive"), std))
+    assert "ci.failing" not in found
 
 
 def archived_entry(inv: dict[str, InventoryEntry], **overrides: Any) -> InventoryEntry:
