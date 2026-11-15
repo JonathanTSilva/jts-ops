@@ -1,7 +1,7 @@
 <!-- brand:header:start -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/header-eee9fd25-dark.svg">
-  <img alt="jts-ops: CLI that audits and applies the GitHub standard across all repositories" src="assets/brand/header-eee9fd25-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/header-a34fd002-dark.svg">
+  <img alt="jts-ops: CLI that audits and applies the GitHub standard across all repositories" src="assets/brand/header-a34fd002-light.svg" width="100%">
 </picture>
 <!-- brand:header:end -->
 
