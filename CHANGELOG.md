@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/JonathanTSilva/jts-ops/compare/v1.0.0...v1.1.0) (2026-11-16)
+
+
+### Features
+
+* skip repos listed in a private ignore file ([#65](https://github.com/JonathanTSilva/jts-ops/issues/65)) ([e429ec6](https://github.com/JonathanTSilva/jts-ops/commit/e429ec64c68883659c4cc4c93fb07456b838153d))
+
 ## 1.0.0 (2026-11-16)
 
 
