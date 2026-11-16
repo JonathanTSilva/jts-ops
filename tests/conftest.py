@@ -8,6 +8,12 @@ from jts_ops.standard import Standard, load_standard
 FIXTURES = Path(__file__).parent / "fixtures" / "standard"
 
 
+@pytest.fixture(autouse=True)
+def _no_real_ignore_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Never read the developer's real ignore list."""
+    monkeypatch.setenv("JTS_IGNORED_REPOS", str(tmp_path / "no-ignored.txt"))
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES

@@ -10,6 +10,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from jts_ops.inventory import load_ignored
 from jts_ops.state import LabelInfo, RepoState
 
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
@@ -174,10 +175,14 @@ def _flatten(pages: Any) -> list[Any]:
 
 def list_repos(gh: Gh, public_only: bool = False) -> list[dict[str, Any]]:
     """List the owner's repos. `public_only` uses the public listing, which a `GITHUB_TOKEN`
-    can call (`/user/repos` needs a user token) and which cannot return private repos."""
+    can call (`/user/repos` needs a user token) and which cannot return private repos.
+    Repos named in the ignore list (`load_ignored`) are left out."""
     if public_only:
-        return gh.api(f"/users/{gh.owner}/repos?type=owner&per_page=100", paginate=True)
-    return gh.api("/user/repos?affiliation=owner&per_page=100", paginate=True)
+        repos = gh.api(f"/users/{gh.owner}/repos?type=owner&per_page=100", paginate=True)
+    else:
+        repos = gh.api("/user/repos?affiliation=owner&per_page=100", paginate=True)
+    ignored = load_ignored()
+    return [repo for repo in repos if repo["name"] not in ignored]
 
 
 def _or_none_on(statuses: Collection[int], gh: Gh, path: str) -> Any:
