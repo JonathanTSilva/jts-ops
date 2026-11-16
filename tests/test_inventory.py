@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from jts_ops.inventory import InventoryEntry, by_target, load_inventory
+from jts_ops.inventory import InventoryEntry, by_target, load_ignored, load_inventory
 from jts_ops.standard import Standard
 
 
@@ -62,3 +62,13 @@ def test_default_private_path_is_under_home(
     default.parent.mkdir(parents=True)
     default.write_text((fixtures_dir / "inventory.private.yml").read_text())
     assert "hidden-notes" in load_inventory(fixtures_dir)
+
+
+def test_load_ignored_reads_names_and_skips_comments(tmp_path: Path):
+    path = tmp_path / "ignored.txt"
+    path.write_text("# play repos\nsandbox-one\n\nsandbox-two  # scratch\n", encoding="utf-8")
+    assert load_ignored(path) == {"sandbox-one", "sandbox-two"}
+
+
+def test_load_ignored_missing_file_ignores_nothing(tmp_path: Path):
+    assert load_ignored(tmp_path / "absent.txt") == frozenset()

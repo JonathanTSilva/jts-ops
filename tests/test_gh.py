@@ -264,3 +264,12 @@ def test_read_only_gh_refuses_writes_before_calling_the_runner():
     assert runner.calls == []
     gh.api("/repos/x")  # GET still works
     assert len(runner.calls) == 1
+
+
+def test_list_repos_skips_ignored_repos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    ignored = tmp_path / "ignored.txt"
+    ignored.write_text("example-second\n", encoding="utf-8")
+    monkeypatch.setenv("JTS_IGNORED_REPOS", str(ignored))
+    runner = FakeRunner({"/user/repos": "repos_slurp.json"})
+    repos = list_repos(Gh("ExampleOwner", runner))
+    assert [r["name"] for r in repos] == ["example-repo"]

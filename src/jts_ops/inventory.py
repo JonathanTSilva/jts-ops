@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 PRIVATE_INVENTORY_ENV = "JTS_PRIVATE_INVENTORY"
+IGNORED_REPOS_ENV = "JTS_IGNORED_REPOS"
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,31 @@ def default_private_path() -> Path:
     if override:
         return Path(override).expanduser()
     return Path("~/.config/jts-ops/inventory.private.yml").expanduser()
+
+
+def default_ignored_path() -> Path:
+    """Path of the ignore list: `$JTS_IGNORED_REPOS`, else under `~/.config`."""
+    override = os.environ.get(IGNORED_REPOS_ENV)
+    if override:
+        return Path(override).expanduser()
+    return Path("~/.config/jts-ops/ignored.txt").expanduser()
+
+
+def load_ignored(path: Path | None = None) -> frozenset[str]:
+    """Names of repos that are not part of the system, one per line (`#` starts a comment).
+
+    A missing file means nothing is ignored. The file lives outside every repo because
+    a repo name may be private.
+    """
+    target = path if path is not None else default_ignored_path()
+    if not target.is_file():
+        return frozenset()
+    names: set[str] = set()
+    for line in target.read_text(encoding="utf-8").splitlines():
+        name = line.split("#", 1)[0].strip()
+        if name:
+            names.add(name)
+    return frozenset(names)
 
 
 def _read_entries(path: Path) -> list[InventoryEntry]:
