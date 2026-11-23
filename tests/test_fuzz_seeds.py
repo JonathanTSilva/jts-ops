@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 FUZZ_DIR = Path(__file__).resolve().parent.parent / "fuzz"
-SEEDS = sorted((FUZZ_DIR / "corpus" / "frontmatter").glob("*.md"))
+SEEDS = sorted((FUZZ_DIR / "corpus" / "frontmatter").glob("*.note"))
 
 
 def _load_fuzz_one() -> Callable[[bytes], None]:
