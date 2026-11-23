@@ -2,7 +2,7 @@ import json
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -470,3 +470,125 @@ def test_sync_prints_no_escape_sequence_from_a_title(std: Standard, inv: dict[st
             assert "\x1b" not in out and "\x07" not in out
     finally:
         ISSUES["ai-helper"][0]["title"] = "Retry"
+
+
+# ------------------------------------------------------------------ edge cases
+
+
+def test_empty_field_entries_are_ignored(std: Standard):
+    fake = ready(std)
+    cast(list[Any], fake.fields)[:0] = [None, {"name": "no id"}]  # GitHub can return null nodes
+    assert ensure_project(gh_for(fake), std, execute=True, report=quiet) is not None
+    assert fake.mutations == []
+
+
+def test_ensure_leaves_a_field_that_is_not_a_single_select_alone(std: Standard):
+    fake = FakeProjects(project=True)
+    fake.fields.append({"__typename": "ProjectV2Field", "id": "F_text", "name": "Priority"})
+    lines: list[str] = []
+    ensure_project(gh_for(fake), std, execute=False, report=lines.append)
+    assert "  warning: field Priority exists but is not a single select; left alone" in lines
+
+
+class Ghost(FakeProjects):
+    """GitHub accepts every write but never lists the project it supposedly created."""
+
+    def graphql(self, query: str, v: dict[str, Any]) -> dict[str, Any]:
+        if "projectsV2(" in query:
+            return {"user": {"id": "U_1", "projectsV2": {"nodes": []}}}
+        return super().graphql(query, v)
+
+
+def test_ensure_fails_when_the_created_project_cannot_be_found(std: Standard):
+    with pytest.raises(ProjectError, match="missing after creating it"):
+        ensure_project(gh_for(Ghost()), std, execute=True, report=quiet)
+
+
+class IssueErrors(FakeProjects):
+    """The issues endpoint of some repos answers with an error."""
+
+    def __init__(self, errors: dict[str, str]) -> None:
+        super().__init__()
+        self.errors = errors
+
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        path = next(a for a in args if a.startswith("/") or a == "graphql")
+        if path.startswith("/repos/"):
+            error = self.errors.get(path.split("/")[3])
+            if error:
+                return subprocess.CompletedProcess(args, 1, "", error)
+        return super().__call__(args)
+
+
+def ready_with(fake: FakeProjects, std: Standard) -> FakeProjects:
+    ensure_project(gh_for(fake), std, execute=True, report=quiet)
+    fake.requests.clear()
+    return fake
+
+
+@pytest.mark.parametrize("error", ["gh: Not Found (HTTP 404)", "gh: Gone (HTTP 410)"])
+def test_a_repo_with_issues_disabled_has_no_items(
+    error: str, std: Standard, inv: dict[str, InventoryEntry]
+):
+    fake = ready_with(IssueErrors({"ai-helper": error}), std)
+    result = sync_project(gh_for(fake), inv, execute=True, report=quiet)
+    assert {i["content"] for i in fake.items} == {"I_3", "I_4"}
+    assert result.added == 2
+
+
+def test_other_issue_listing_errors_abort_the_sync(std: Standard, inv: dict[str, InventoryEntry]):
+    fake = ready_with(IssueErrors({"ai-helper": "gh: Server Error (HTTP 500)"}), std)
+    with pytest.raises(GhError):
+        sync_project(gh_for(fake), inv, execute=True, report=quiet)
+
+
+def test_sync_needs_the_inbox_option(std: Standard, inv: dict[str, InventoryEntry]):
+    fake = ready(std)
+    fake.field("Status")["options"] = [
+        o for o in fake.field("Status")["options"] if o["name"] != "Inbox"
+    ]
+    with pytest.raises(ProjectError, match="no Inbox option"):
+        sync_project(gh_for(fake), inv, execute=True, report=quiet)
+
+
+def test_sync_needs_the_status_field(std: Standard, inv: dict[str, InventoryEntry]):
+    fake = ready(std)
+    fake.fields = [f for f in fake.fields if f["name"] != "Status"]
+    with pytest.raises(ProjectError, match="Status field"):
+        sync_project(gh_for(fake), inv, execute=True, report=quiet)
+
+
+def test_a_kind_without_an_area_option_warns_once_and_still_adds(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    fake = ready(std)
+    kind = inv["ai-helper"].kind
+    fake.field("Area")["options"] = [o for o in fake.field("Area")["options"] if o["name"] != kind]
+    lines: list[str] = []
+    result = sync_project(gh_for(fake), inv, execute=True, report=lines.append)
+    warnings = [line for line in lines if "no Area option" in line]
+    assert len(warnings) == 1  # ai-helper has two items, one warning
+    assert f"kind {kind}" in warnings[0]
+    assert result.added == 4
+    by_content = {i["content"]: i["values"] for i in fake.items}
+    assert "Area" not in by_content["I_1"]
+
+
+class FailingAdd(FakeProjects):
+    """Adding the issue with node id `I_1` to the project fails."""
+
+    def graphql(self, query: str, v: dict[str, Any]) -> dict[str, Any]:
+        if "addProjectV2ItemById" in query and v["contentId"] == "I_1":
+            raise GhError("Something broke\nsecond line")
+        return super().graphql(query, v)
+
+
+def test_a_failed_add_is_counted_and_the_rest_continue(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    fake = ready_with(FailingAdd(), std)
+    lines: list[str] = []
+    result = sync_project(gh_for(fake), inv, execute=True, report=lines.append)
+    assert (result.added, result.failed) == (3, 1)
+    assert any(line.endswith(": Something broke") and "FAILED" in line for line in lines)
+    assert "I_1" not in {i["content"] for i in fake.items}
