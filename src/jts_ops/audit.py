@@ -117,6 +117,25 @@ def _audit_active(state: RepoState, kind: str, std: Standard, add: Any) -> None:
         add("labels.missing", "warning", "missing labels: " + ", ".join(missing))
 
 
+# Stacks that have a test runner worth a coverage badge.
+COVERAGE_STACKS = ("python", "go", "node")
+
+
+def badge_flags(state: RepoState) -> dict[str, bool]:
+    """Which README badges the repo's template answers justify.
+
+    A repo without a readable answers file keeps every badge, as before the flags existed.
+    """
+    answers = state.answers
+    if answers is None:
+        return {"coverage": True, "quality": True, "release": True}
+    return {
+        "coverage": not state.private and answers.get("stack") in COVERAGE_STACKS,
+        "quality": answers.get("sonar") is True,
+        "release": answers.get("has_release") is True,
+    }
+
+
 Result = tuple[RepoState, InventoryEntry | None, list[Finding]]
 
 
@@ -190,6 +209,7 @@ def build_report(
                 "status": entry.status if entry else None,
                 "fate": entry.fate if entry else None,
                 "ci": state.ci_conclusion,
+                "badges": badge_flags(state),
                 "compliant": errors == 0,
                 "errors": errors,
                 "warnings": sum(f.severity == "warning" for f in ordered),

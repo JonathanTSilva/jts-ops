@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from jts_ops.audit import Finding, audit_repo, build_report
+from jts_ops.audit import Finding, audit_repo, badge_flags, build_report
 from jts_ops.inventory import InventoryEntry
 from jts_ops.standard import Standard
 from jts_ops.state import RepoState
@@ -425,3 +425,33 @@ def test_visibility_checked_for_every_profile(std: Standard, inv: dict[str, Inve
     )
     state = good_state(name="jts-vault-example", private=True, license_spdx=None)
     assert "visibility.mismatch" in checks(audit_repo(state, vault, std))
+
+
+def answers_state(answers: dict[str, Any] | None, **overrides: Any) -> RepoState:
+    return good_state(answers=answers, **overrides)
+
+
+def test_dashboard_badges_flags(std: Standard, inv: dict[str, InventoryEntry]):
+    state = answers_state({"stack": "none", "sonar": False, "has_release": True})
+    report = build_report([result(state, entry(inv), [])], public_only=False)
+    assert report.repos[0]["badges"] == {"coverage": False, "quality": False, "release": True}
+    assert json.loads(report.to_json())["repos"][0]["badges"]["coverage"] is False
+
+
+@pytest.mark.parametrize("stack", ["python", "go", "node"])
+def test_badges_coverage_for_public_code_stacks(stack: str):
+    flags = badge_flags(answers_state({"stack": stack, "sonar": True, "has_release": False}))
+    assert flags == {"coverage": True, "quality": True, "release": False}
+
+
+def test_badges_coverage_needs_public_repo():
+    flags = badge_flags(answers_state({"stack": "python"}, private=True))
+    assert flags["coverage"] is False
+
+
+def test_badges_missing_answers_keep_all_true():
+    assert badge_flags(answers_state(None)) == {"coverage": True, "quality": True, "release": True}
+
+
+def test_badges_missing_keys_are_false():
+    assert badge_flags(answers_state({})) == {"coverage": False, "quality": False, "release": False}
