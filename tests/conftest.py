@@ -14,6 +14,12 @@ def _no_real_ignore_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     monkeypatch.setenv("JTS_IGNORED_REPOS", str(tmp_path / "no-ignored.txt"))
 
 
+@pytest.fixture(autouse=True)
+def _cwd_is_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Report and plan paths are confined to the cwd (or _reports); tests write under tmp_path."""
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     return FIXTURES
