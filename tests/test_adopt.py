@@ -1,6 +1,7 @@
 import datetime
 import re
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -8,7 +9,12 @@ from typing import Any
 
 import pytest
 
-from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
+from jts_ops.adopt import (
+    TEMPLATE_REF,
+    AdoptError,
+    _conflicts,  # pyright: ignore[reportPrivateUsage]
+    adopt_repo,
+)
 from jts_ops.cli import main
 from jts_ops.gh import Gh
 from jts_ops.inventory import InventoryEntry
@@ -367,6 +373,29 @@ CONFLICT_OUTPUT = (
     "\x1b[1m    conflict\x1b[0m  .editorconfig\n"
     "\x1b[1m      create\x1b[0m  AGENTS.md\n"
 )
+
+
+def test_conflicts_pins_current_matches():
+    out = (
+        "    conflict  a.txt\n"
+        "\x1b[1mconflict\x1b[0m\tb.txt  \n"
+        "  conflict c d.txt\n"
+        "conflict  a.txt\n"
+        "conflicts x\n"
+        "conflict\n"
+        "conflict   \n"
+        "conflict x\r\n"
+        "  skip  conflict z\n"
+    )
+    assert _conflicts(out) == ["a.txt", "b.txt", "c d.txt", "x"]
+
+
+@pytest.mark.parametrize("filler", [" ", "\t", " \t", "conflict "])
+def test_conflicts_is_linear_on_adversarial_lines(filler: str):
+    start = time.perf_counter()
+    _conflicts(filler * 10_000 + "\n" + "conflict" + filler * 10_000 + "\n" + filler * 10_000)
+    _conflicts("conflict" + " " * 10_000)
+    assert time.perf_counter() - start < 0.1
 
 
 def test_conflicts_reach_the_steps_and_the_pr_body(

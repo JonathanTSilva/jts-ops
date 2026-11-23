@@ -1,5 +1,6 @@
 import hashlib
 import re
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from jts_ops.brand import (
     STYLE_VERSION,
     TEXT_MAX,
     BrandError,
+    _marker_line,  # pyright: ignore[reportPrivateUsage]
     brand_clone,
     brand_hash,
     button_svg,
@@ -69,8 +71,12 @@ def first_glyph(svg: str, y_index: int = 0) -> tuple[str, float]:
 
 def test_same_input_same_output():
     for theme in ("light", "dark"):
-        assert header_svg("scriptize", DESC, theme) == header_svg("scriptize", DESC, theme)
-        assert button_svg(theme) == button_svg(theme)
+        first, second = header_svg("scriptize", DESC, theme), header_svg("scriptize", DESC, theme)
+        assert first.startswith("<svg")
+        assert first == second
+        first_button, second_button = button_svg(theme), button_svg(theme)
+        assert first_button.startswith("<svg")
+        assert first_button == second_button
 
 
 def test_unknown_theme_rejected():
@@ -413,3 +419,32 @@ def test_fonts_are_packaged_with_their_licence():
     assert (fonts / "JetBrainsMono-Bold.ttf").is_file()
     assert "JetBrains Mono" in (fonts / "OFL-JetBrainsMono.txt").read_text(encoding="utf-8")
     assert "SIL Open Font License" in (fonts / "OFL.txt").read_text(encoding="utf-8")
+
+
+def test_marker_line_pins_fence_matching():
+    marker = HEADER_START
+    # Fences of 3+ backticks or tildes, indented at most 3 spaces, hide a marker; others do not.
+    assert _marker_line(f"```\n{marker}\n```\n", marker) is None
+    assert _marker_line(f"~~~~ info\n{marker}\n~~~~\n", marker) is None
+    assert _marker_line(f"   ```\n{marker}\n   ```\n", marker) is None
+    assert _marker_line(f"```\n{marker}\n~~~\n", marker) is None  # other char does not close
+    assert _marker_line(f"````\n```\n{marker}\n", marker) is None  # shorter run does not close
+    assert _marker_line(f"```\n{marker}\n``` x\n{marker}\n", marker) is None  # info text
+    assert _marker_line(f"```\n{marker}\n````\n{marker}\n", marker) == (
+        len(f"```\n{marker}\n````\n"),
+        len(f"```\n{marker}\n````\n") + len(marker),
+    )
+    assert _marker_line(f"    ```\n{marker}\n", marker) == (8, 8 + len(marker))  # 4 spaces: code
+    assert _marker_line(f"``\n{marker}\n", marker) == (3, 3 + len(marker))  # only two backticks
+    assert _marker_line(f"``` a`b\n{marker}\n", marker) == (8, 8 + len(marker))  # not a fence
+    assert _marker_line(f"~~~ a`b\n{marker}\n", marker) is None  # tilde fences allow backticks
+    assert _marker_line(f"```\r\n{marker}\r\n```\r\n", marker) is None
+
+
+@pytest.mark.parametrize("fill", ["`", "~", " ", "`~"])
+def test_marker_line_is_linear_on_long_lines(fill: str):
+    text = fill * 10_000 + "\n" + HEADER_START + "\n"
+    start = time.perf_counter()
+    _marker_line(text, HEADER_START)
+    _marker_line(fill * 10_000 + "x\n" + HEADER_START, HEADER_START)
+    assert time.perf_counter() - start < 0.1

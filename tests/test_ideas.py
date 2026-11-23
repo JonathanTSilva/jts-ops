@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -150,6 +151,44 @@ def test_first_paragraph_when_there_is_no_idea_section():
 def test_no_body_at_all():
     assert extract_idea("---\ngithub: idea\n---\n# T\n") == ""
     assert extract_idea("---\ngithub: idea\n---\n# T\n\n## Idea\n\n## Next\n\nx\n") == ""
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## Idea",
+        "##\tIdea",
+        "##   Idea   ",
+        "## Idea ##",
+        "## Idea ## ",
+        "## Idea#",
+        "##  IDEA  #  ",
+    ],
+)
+def test_heading_forms_that_open_the_idea_section(heading: str):
+    assert extract_idea(f"# T\n\n{heading}\n\nBody.\n\n## Next\n\nx\n") == "Body."
+
+
+@pytest.mark.parametrize(
+    "not_heading", ["##Idea", "####### Idea", " ## Idea", "## Ideas", "## Idea x", "#"]
+)
+def test_lines_that_are_not_the_idea_heading(not_heading: str):
+    assert extract_idea(f"# T\n\nFirst.\n\n{not_heading}\n\nBody.\n") == "First."
+
+
+def test_heading_levels_end_the_idea_section():
+    text = "## Idea\n\nA\n\n### Sub\n\nB\n\n# Top\n\nC\n"
+    assert extract_idea(text) == "A\n\n### Sub\n\nB"
+    assert extract_idea("## Idea\n\nA\n\n#\tTop ##\n\nC\n") == "A"
+
+
+@pytest.mark.parametrize("filler", [" ", "\t", "#", " #", "# ", "a #"])
+def test_heading_regex_is_linear_on_adversarial_lines(filler: str):
+    start = time.perf_counter()
+    extract_idea("# " + filler * 10_000 + "\n")
+    extract_idea("## Idea\n\n## " + filler * 10_000 + "\n")
+    extract_idea("##" + filler * 10_000)
+    assert time.perf_counter() - start < 0.1
 
 
 # ------------------------------------------------------------------ the command

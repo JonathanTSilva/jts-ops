@@ -37,15 +37,17 @@ AI_NOTE = "AI assistance: Claude Code, rendered by jts-ops adopt"
 RELEASE_PLEASE_FILES = ("release-please-config.json", ".release-please-manifest.json")
 _ISSUE_NUMBER = re.compile(r"/issues/(\d+)")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_CONFLICT = re.compile(r"^\s*conflict\s+(.+)$")
+_CONFLICT_WORD = "conflict"
 
 
 def _conflicts(output: str) -> list[str]:
     """Paths copier reported as `conflict` (existing and different), in order, without repeats."""
     found: list[str] = []
     for line in _ANSI.sub("", output).splitlines():
-        match = _CONFLICT.match(line)
-        path = match.group(1).strip() if match else ""
+        # `conflict`, whitespace, then the path (string operations: no backtracking).
+        word = line.lstrip()
+        rest = word[len(_CONFLICT_WORD) :]
+        path = rest.strip() if word.startswith(_CONFLICT_WORD) and rest[:1].isspace() else ""
         if path and path not in found:
             found.append(path)
     return found
