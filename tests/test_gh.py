@@ -287,3 +287,5 @@ def test_list_repos_skips_forks():
 
     repos = list_repos(Gh("ExampleOwner", runner))
     assert [r["name"] for r in repos] == ["example-repo", "example-no-flag"]
+    every = list_repos(Gh("ExampleOwner", runner), include_forks=True)
+    assert [r["name"] for r in every] == ["example-repo", "example-fork", "example-no-flag"]

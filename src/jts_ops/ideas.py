@@ -203,7 +203,7 @@ def run_ideas(
     ideas, left_out = find_ideas(vault)
     for line in left_out:
         report(line)
-    live = {str(r["name"]).lower(): bool(r["private"]) for r in list_repos(gh)}
+    live = {str(r["name"]).lower(): bool(r["private"]) for r in list_repos(gh, include_forks=True)}
     private = private_names(inv, [n for n, is_private in live.items() if is_private])
     created = refused = failed = 0
     for idea in ideas:

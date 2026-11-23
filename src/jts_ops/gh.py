@@ -173,16 +173,23 @@ def _flatten(pages: Any) -> list[Any]:
     return out
 
 
-def list_repos(gh: Gh, public_only: bool = False) -> list[dict[str, Any]]:
+def list_repos(
+    gh: Gh, public_only: bool = False, include_forks: bool = False
+) -> list[dict[str, Any]]:
     """List the owner's repos. `public_only` uses the public listing, which a `GITHUB_TOKEN`
     can call (`/user/repos` needs a user token) and which cannot return private repos.
-    Repos named in the ignore list (`load_ignored`) and forks are left out."""
+    Repos named in the ignore list (`load_ignored`) are left out, and so are forks unless
+    `include_forks` is set: safety checks that must know every private name pass it."""
     if public_only:
         repos = gh.api(f"/users/{gh.owner}/repos?type=owner&per_page=100", paginate=True)
     else:
         repos = gh.api("/user/repos?affiliation=owner&per_page=100", paginate=True)
     ignored = load_ignored()
-    return [repo for repo in repos if repo["name"] not in ignored and not repo.get("fork")]
+    return [
+        repo
+        for repo in repos
+        if repo["name"] not in ignored and (include_forks or not repo.get("fork"))
+    ]
 
 
 def _or_none_on(statuses: Collection[int], gh: Gh, path: str) -> Any:
