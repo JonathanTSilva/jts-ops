@@ -1,6 +1,8 @@
 """Observed state of one GitHub repo, as the audit sees it."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -34,3 +36,5 @@ class RepoState:
     label_details: tuple[LabelInfo, ...] = ()
     squash_merge_commit_title: str | None = None
     squash_merge_commit_message: str | None = None
+    # The repo's parsed `.copier-answers.yml`; None when it has none (or it could not be read).
+    answers: Mapping[str, Any] | None = None

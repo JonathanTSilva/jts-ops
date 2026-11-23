@@ -289,3 +289,33 @@ def test_list_repos_skips_forks():
     assert [r["name"] for r in repos] == ["example-repo", "example-no-flag"]
     every = list_repos(Gh("ExampleOwner", runner), include_forks=True)
     assert [r["name"] for r in every] == ["example-repo", "example-fork", "example-no-flag"]
+
+
+def answers_routes(content: str | tuple[int, str]) -> dict[str, Route]:
+    routes = happy_routes()
+    routes["/git/trees/"] = "tree_with_answers.json"
+    routes["/contents/.copier-answers.yml"] = (
+        content if isinstance(content, tuple) else "contents_answers.json"
+    )
+    return routes
+
+
+def test_fetch_state_reads_copier_answers():
+    runner = FakeRunner(answers_routes("ok"))
+    state = fetch_state(Gh("ExampleOwner", runner), repo())
+    assert state.answers == {"stack": "python", "sonar": True, "has_release": False}
+    paths = [next(a for a in call if a.startswith("/")) for call in runner.calls]
+    assert "/repos/ExampleOwner/example-repo/contents/.copier-answers.yml?ref=main" in paths
+    assert all(call[call.index("--method") + 1] == "GET" for call in runner.calls)
+
+
+def test_no_answers_file_means_no_contents_call():
+    runner = FakeRunner(happy_routes())
+    state = fetch_state(Gh("ExampleOwner", runner), repo())
+    assert state.answers is None
+    assert not any("/contents/" in a for call in runner.calls for a in call)
+
+
+def test_answers_listed_but_gone_is_none():
+    state = fetch_state(Gh("ExampleOwner", FakeRunner(answers_routes((404, "Not Found")))), repo())
+    assert state.answers is None

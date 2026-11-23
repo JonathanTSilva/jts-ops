@@ -10,6 +10,9 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
+import yaml
+
+from jts_ops.audit import COPIER_ANSWERS
 from jts_ops.inventory import load_ignored
 from jts_ops.state import LabelInfo, RepoState
 
@@ -202,6 +205,32 @@ def _or_none_on(statuses: Collection[int], gh: Gh, path: str) -> Any:
         raise
 
 
+def _fetch_answers(
+    gh: Gh, base: str, branch: str, files: frozenset[str] | None
+) -> dict[str, Any] | None:
+    """The repo's `.copier-answers.yml` as a mapping, read through the contents API (GET only).
+
+    None when the file is absent, unreadable or not a mapping. The call is skipped unless the
+    tree lists the file, so a repo without it costs nothing.
+    """
+    if files is None or COPIER_ANSWERS not in files:
+        return None
+    raw: Any = _or_none_on({404}, gh, f"{base}/contents/{COPIER_ANSWERS}?ref={branch}")
+    if not isinstance(raw, dict):
+        return None
+    reply = cast("dict[str, Any]", raw)
+    if reply.get("encoding") != "base64":
+        return None
+    try:
+        text = base64.b64decode(cast("str", reply["content"])).decode("utf-8")
+        data: Any = yaml.safe_load(text)
+    except (KeyError, ValueError, yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {str(k): v for k, v in cast("dict[Any, Any]", data).items()}
+
+
 def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
     base = f"/repos/{gh.owner}/{repo['name']}"
     if "allow_squash_merge" not in repo:
@@ -236,6 +265,8 @@ def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
     runs: list[dict[str, Any]] = runs_json["workflow_runs"] if runs_json else []
     ci_conclusion: str | None = runs[0]["conclusion"] if runs else None
 
+    answers = _fetch_answers(gh, base, branch, files)
+
     label_rows: list[dict[str, Any]] = gh.api(f"{base}/labels", paginate=True)
     labels = tuple(label["name"] for label in label_rows)
     label_details = tuple(
@@ -267,4 +298,5 @@ def fetch_state(gh: Gh, repo: dict[str, Any]) -> RepoState:
         label_details=label_details,
         squash_merge_commit_title=repo.get("squash_merge_commit_title"),
         squash_merge_commit_message=repo.get("squash_merge_commit_message"),
+        answers=answers,
     )
