@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.0](https://github.com/JonathanTSilva/jts-ops/compare/v1.0.0...v1.1.0) (2026-11-23)
+
+
+### Features
+
+* **audit:** add badge flags per repo to the dashboard JSON ([#76](https://github.com/JonathanTSilva/jts-ops/issues/76)) ([7f84bcb](https://github.com/JonathanTSilva/jts-ops/commit/7f84bcb550669206bfc95056fb53eb4d6ef0aab3))
+* skip repos listed in a private ignore file ([#65](https://github.com/JonathanTSilva/jts-ops/issues/65)) ([e429ec6](https://github.com/JonathanTSilva/jts-ops/commit/e429ec64c68883659c4cc4c93fb07456b838153d))
+
+
+### Bug Fixes
+
+* confine user-supplied output and plan paths, use uv --no-build in audit ([#73](https://github.com/JonathanTSilva/jts-ops/issues/73)) ([0049daa](https://github.com/JonathanTSilva/jts-ops/commit/0049daa9a299a31ec400d217aeaf431896da141a))
+* exclude forks from list_repos ([#69](https://github.com/JonathanTSilva/jts-ops/issues/69)) ([54c04ae](https://github.com/JonathanTSilva/jts-ops/commit/54c04ae702f5e3564704fbf9b378244ae1ee6bb0))
+* resolve Sonar bugs and super-linear regexes ([#71](https://github.com/JonathanTSilva/jts-ops/issues/71)) ([fb8d06e](https://github.com/JonathanTSilva/jts-ops/commit/fb8d06eaf01c2df55597f7e5ea8485b97bf3b699)), closes [#70](https://github.com/JonathanTSilva/jts-ops/issues/70)
+
 ## 1.0.0 (2026-11-16)
 
 
