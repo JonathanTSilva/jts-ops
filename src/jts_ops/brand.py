@@ -333,7 +333,19 @@ def footer_block() -> str:
     )
 
 
-_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+def _fence(line: str) -> tuple[str, str] | None:
+    """(fence run, text after it) when `line` opens or closes a ``` or ~~~ fence, else None.
+
+    Plain string operations: the same shape as a regex with an unbounded fence run followed by
+    `.*` backtracks super-linearly on long lines.
+    """
+    rest = line.lstrip(" ")
+    if len(line) - len(rest) > 3 or rest[:1] not in ("`", "~"):
+        return None
+    run = len(rest) - len(rest.lstrip(rest[0]))
+    if run < 3:
+        return None
+    return rest[:run], rest[run:]
 
 
 def _marker_line(text: str, marker: str) -> tuple[int, int] | None:
@@ -345,17 +357,12 @@ def _marker_line(text: str, marker: str) -> tuple[int, int] | None:
     fence: str | None = None  # the opening fence run while inside a code block
     offset = 0
     for line in text.split("\n"):
-        m = _FENCE.match(line.rstrip("\r"))
+        m = _fence(line.rstrip("\r"))
         if fence is not None:
-            if (
-                m
-                and m.group(1)[0] == fence[0]
-                and len(m.group(1)) >= len(fence)
-                and not m.group(2).strip()
-            ):
+            if m and m[0][0] == fence[0] and len(m[0]) >= len(fence) and not m[1].strip():
                 fence = None
-        elif m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
-            fence = m.group(1)
+        elif m and not (m[0][0] == "`" and "`" in m[1]):
+            fence = m[0]
         elif line.strip() == marker:
             start = offset + len(line) - len(line.lstrip())
             return start, start + len(marker)

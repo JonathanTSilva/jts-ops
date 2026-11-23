@@ -29,8 +29,17 @@ FOOTER_TEXT = "From the vault"
 FOOTER = f"\n\n---\n\n{FOOTER_TEXT}"
 # Directories the vault tooling never reads: Obsidian's own state, git and the trash.
 _SKIPPED_DIRS = frozenset({".obsidian", ".git", ".trash"})
-_HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
 _NEWLINE = re.compile(r"\r\n?")
+
+
+def _heading(line: str) -> tuple[str, str] | None:
+    """(hashes, text) of an ATX heading: 1-6 `#`, a space or tab, the text without the optional
+    closing `#`s. Plain string operations, so long runs of spaces or `#` cost linear time."""
+    text = line.lstrip("#")
+    level = len(line) - len(text)
+    if not 1 <= level <= 6 or text[:1] not in (" ", "\t"):
+        return None
+    return line[:level], text.strip(" \t").rstrip("#").rstrip(" \t")
 
 
 @dataclass(frozen=True)
@@ -72,19 +81,19 @@ def extract_idea(text: str) -> str:
     its first paragraph after the title; empty when it has neither."""
     lines = _body(text)
     for i, line in enumerate(lines):
-        match = _HEADING.match(line)
-        if match and len(match[1]) == 2 and match[2].lower() == "idea":
+        match = _heading(line)
+        if match and len(match[0]) == 2 and match[1].lower() == "idea":
             section: list[str] = []
             for line_ in lines[i + 1 :]:
-                other = _HEADING.match(line_)
-                if other and len(other[1]) <= 2:
+                other = _heading(line_)
+                if other and len(other[0]) <= 2:
                     break
                 section.append(line_)
             return "\n".join(section).strip()
     paragraph: list[str] = []
     for line in lines:
         stripped = line.strip()
-        if not stripped or _HEADING.match(line) or stripped.startswith("<!--"):
+        if not stripped or _heading(line) or stripped.startswith("<!--"):
             if paragraph:
                 break
             continue

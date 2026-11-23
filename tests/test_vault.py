@@ -1,6 +1,7 @@
 import datetime
 import json
 import subprocess
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,15 @@ from jts_ops.cli import main
 from jts_ops.gh import Gh
 from jts_ops.inventory import InventoryEntry
 from jts_ops.state import RepoState
-from jts_ops.vault import END, NOTES_DIR, START, RepoExtra, note_filename, render_note
+from jts_ops.vault import (
+    _KEY,  # pyright: ignore[reportPrivateUsage]
+    END,
+    NOTES_DIR,
+    START,
+    RepoExtra,
+    note_filename,
+    render_note,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 OWNER = "ExampleOwner"
@@ -583,3 +592,33 @@ def test_hidden_note_onto_an_existing_dot_note_is_refused(
     code, _ = run(standard_dir, vault, FakeGithub([repo_json(".github")]), capsys)
     assert code == 1
     assert (notes / ".github.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("line", "key"),
+    [
+        ("tags: a", "tags"),
+        ("tags:\tb", "tags"),
+        ("tags:", "tags"),
+        ("tags:\n", "tags"),
+        ("tags:\r\n", "tags"),
+        ("_x-y1: z", "_x-y1"),
+        ("a:  ", "a"),
+    ],
+)
+def test_key_matches_pinned(line: str, key: str):
+    match = _KEY.match(line)
+    assert match is not None
+    assert match[1] == key
+
+
+@pytest.mark.parametrize("line", ["tags:x", "1a: b", "- a: b", " a: b", "a b: c", "a\n: b", ":"])
+def test_key_rejects_pinned(line: str):
+    assert _KEY.match(line) is None
+
+
+def test_key_is_linear_on_long_lines():
+    start = time.perf_counter()
+    _KEY.match("a" * 10_000 + ":x")
+    _KEY.match("a-" * 5_000 + " ")
+    assert time.perf_counter() - start < 0.1

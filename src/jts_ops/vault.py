@@ -57,7 +57,7 @@ CREATE_ONLY = ("date", "tags", "language")
 
 # The new-note template used to leave two blank lines between the heading and the block.
 _DOUBLE_BLANK = re.compile(r"\A(# [^\r\n]*)(\r?\n)(?:\r?\n){2}(?=" + re.escape(START) + ")")
-_KEY = re.compile(r"^([A-Za-z_][\w-]*):(?:[ \t]|\r?\n?$)")
+_KEY = re.compile(r"^([A-Za-z_][\w-]*):(?:[ \t]|(?:\r?\n?$))")
 _BOM = "﻿"
 
 
