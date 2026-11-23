@@ -377,10 +377,12 @@ def run_audit(args: argparse.Namespace, gh: Gh | None = None) -> int:
 def run_badges(args: argparse.Namespace) -> int:
     dashboard = json.loads(args.source.read_text(encoding="utf-8"))
     try:
+        if ".." in args.out.parts:
+            raise UserPathError(f"output directory must not contain '..': {args.out}")
         out = _confined(args.out)
         if out.exists() and not out.is_dir():
             raise UserPathError(f"not a directory: {out}")
-        written = write_badges(dashboard, args.out)  # also rejects a `..` segment
+        written = write_badges(dashboard, out)
     except ValueError as err:  # includes UserPathError
         print(f"jts-ops: {err}", file=sys.stderr)
         return 2
