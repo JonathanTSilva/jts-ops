@@ -273,3 +273,17 @@ def test_list_repos_skips_ignored_repos(tmp_path: Path, monkeypatch: pytest.Monk
     runner = FakeRunner({"/user/repos": "repos_slurp.json"})
     repos = list_repos(Gh("ExampleOwner", runner))
     assert [r["name"] for r in repos] == ["example-repo"]
+
+
+def test_list_repos_skips_forks():
+    page = [
+        {"name": "example-repo", "fork": False},
+        {"name": "example-fork", "fork": True},
+        {"name": "example-no-flag"},
+    ]
+
+    def runner(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, json.dumps([page]), "")
+
+    repos = list_repos(Gh("ExampleOwner", runner))
+    assert [r["name"] for r in repos] == ["example-repo", "example-no-flag"]
