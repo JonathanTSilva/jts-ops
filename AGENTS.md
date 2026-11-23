@@ -83,17 +83,19 @@ CI runs the same checks through the shared workflows in [`.github`](https://gith
 
 ## Model routing
 
-Three subagents in `.claude/agents/` carry fixed models, so routing is built in.
+Three subagents in `.claude/agents/` carry fixed models, and Gemini Flash runs through the `agy` CLI.
 
 | Agent | Model | Use for |
 |---|---|---|
 | `architect` | Opus | Thinking: designs, plans, trade-offs, reviews, anything ambiguous or irreversible |
 | `builder` | Sonnet | Building: implementing a scoped task from a plan, writing tests, refactors |
-| `mechanic` | Haiku | Mechanical work: precise, checklist-driven, repetitive edits with a verification command |
+| `agy` (headless) | Gemini 3.8 Flash | Mechanical work, first choice: an exact edit checklist with a command that proves it is done |
+| `mechanic` | Haiku | Mechanical work when Flash fails, or when the work needs shell commands |
 
 Rules:
 
 1. Opus thinks. Design, plans, reviews, and anything that cannot be undone.
 2. Sonnet builds. Give it the task text, the files it may touch and the done-check.
-3. Haiku applies. Give it an exact checklist and a command that proves it is done. If that fails, it escalates to Sonnet and does not improvise.
-4. Jonathan decides. Approvals and irreversible GitHub actions (rename, archive, visibility change, delete) wait for him.
+3. Flash applies first. Run `agy --model gemini-3.8-flash-medium --mode accept-edits -p "<prompt>"` with `-p` last, or it takes the next flag as the prompt. The prompt names the files it may edit, gives the exact checklist and forbids shell commands: headless `agy` is edit-only and cannot read outside its allowed folders. The caller then checks the diff and runs the verify command.
+4. Haiku is the backup. If Flash fails, restore only the files it touched and give the same checklist and verify command to `mechanic`. If that fails too, it escalates to Sonnet and does not improvise.
+5. Jonathan decides. Approvals and irreversible GitHub actions (rename, archive, visibility change, delete) wait for him.
