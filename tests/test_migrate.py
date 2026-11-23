@@ -737,3 +737,75 @@ def test_execute_with_matching_plan_writes(dirs: dict[str, Path]):
     assert code == 0
     assert live.writes()[-1] == ("PATCH", f"/repos/{OWNER}/gadget")  # archive is the last write
     assert ("PATCH", f"/repos/{OWNER}/old-gadget") in live.writes()  # wiki off, then rename
+
+
+class FailingWrites(CliGithub):
+    """Serves reads like `CliGithub`; every write fails with a server error."""
+
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        if args[args.index("--method") + 1] != "GET":
+            self.calls.append((args[args.index("--method") + 1], "write"))
+            return subprocess.CompletedProcess(args, 1, "", "gh: Server Error (HTTP 500)\n")
+        return super().__call__(args)
+
+
+class BrokenRead(CliGithub):
+    """Lists repos, but the labels endpoint of `old-gadget` fails."""
+
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        path = next(a for a in args if a.startswith("/"))
+        if "/old-gadget/labels" in path:
+            return subprocess.CompletedProcess(args, 1, "", "gh: Server Error (HTTP 500)\n")
+        return super().__call__(args)
+
+
+class BrokenList(CliGithub):
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 1, "", "gh: Server Error (HTTP 500)\n")
+
+
+def test_unreadable_template_is_exit_2(dirs: dict[str, Path], capsys: pytest.CaptureFixture[str]):
+    (dirs["template"] / "template" / "LICENSE.jinja").unlink()
+    assert main(migrate_args(dirs), Gh(OWNER, CliGithub([]))) == 2
+    assert capsys.readouterr().err.startswith("jts-ops:")
+
+
+def test_github_listing_failure_is_exit_1(
+    dirs: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    assert main(migrate_args(dirs), Gh(OWNER, BrokenList([]))) == 1
+    assert "cannot list repos" in capsys.readouterr().err
+
+
+def test_repo_filter_and_unlisted_repos_are_skipped(
+    dirs: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    fake = CliGithub([cli_repo("old-gadget"), cli_repo("tidy-tool"), cli_repo("stranger")])
+    assert main(migrate_args(dirs, "--repo", "old-gadget"), Gh(OWNER, fake)) == 0
+    out = capsys.readouterr().out
+    assert "old-gadget" in out
+    assert "tidy-tool" not in out
+    assert "stranger" not in out
+
+
+def test_repo_that_cannot_be_planned_is_reported_and_fails_the_run(
+    dirs: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    fake = BrokenRead([cli_repo("old-gadget")])
+    assert main(migrate_args(dirs), Gh(OWNER, fake)) == 1
+    assert "old-gadget\n  skip: cannot plan:" in capsys.readouterr().out
+
+
+def test_failed_steps_are_reported_and_fail_the_run(
+    dirs: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    plan_file = dirs["tmp"] / "plan.json"
+    dry = CliGithub([cli_repo("old-gadget")])
+    assert main(migrate_args(dirs, "--plan-out", str(plan_file)), Gh(OWNER, dry)) == 0
+    capsys.readouterr()
+    live = FailingWrites([cli_repo("old-gadget")])
+    code = main(migrate_args(dirs, "--execute", "--plan", str(plan_file)), Gh(OWNER, live))
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "FAILED old-gadget" in captured.err
+    assert "failures" in captured.out

@@ -438,3 +438,86 @@ def test_live_public_overrides_an_inventory_that_says_private(
     fake = FakeGithub(listed=[{"name": "secret-lab", "private": False}])
     _, out = run(standard_dir, vault, fake, capsys)
     assert "refused: Inner: names the private repo secret-lab" in out
+
+
+class FailingIssues(FakeGithub):
+    """Like `FakeGithub`, but creating an issue fails with a server error."""
+
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        path = next(a for a in args if a.startswith("/") or a == "graphql")
+        if path.endswith("/issues"):
+            return subprocess.CompletedProcess(args, 1, "", "gh: Server Error (HTTP 500)\nretry\n")
+        return super().__call__(args)
+
+
+class MalformedIssues(FakeGithub):
+    """Like `FakeGithub`, but the created issue has no URL."""
+
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        path = next(a for a in args if a.startswith("/") or a == "graphql")
+        if path.endswith("/issues"):
+            return subprocess.CompletedProcess(args, 0, "{}", "")
+        return super().__call__(args)
+
+
+def test_note_that_is_not_utf8_is_skipped(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    (vault / "04-Permanent" / "binary.md").write_bytes(b"github: idea\n\xff\xfe\x00")
+    put(vault, "Better retries", idea())
+    code, out = run(standard_dir, vault, FakeGithub(), capsys)
+    assert code == 0
+    assert out.strip().splitlines()[-1] == "dry run: would create 1, refused 0, skipped 0"
+
+
+def test_failed_issue_creation_is_reported_and_the_note_is_untouched(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    note = put(vault, "Better retries", idea())
+    before = note.read_text(encoding="utf-8")
+    code, out = run(standard_dir, vault, FailingIssues(), capsys, "--execute")
+    assert code == 1
+    assert "FAILED Better retries: gh: Server Error (HTTP 500)" in out
+    assert note.read_text(encoding="utf-8") == before
+
+
+def test_an_answer_without_an_issue_url_is_a_failure(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    note = put(vault, "Better retries", idea())
+    before = note.read_text(encoding="utf-8")
+    code, out = run(standard_dir, vault, MalformedIssues(), capsys, "--execute")
+    assert code == 1
+    assert "FAILED Better retries:" in out
+    assert note.read_text(encoding="utf-8") == before
+
+
+def test_note_that_cannot_be_written_back_is_reported(
+    standard_dir: Path,
+    vault: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    put(vault, "Better retries", idea())
+
+    def refuse(self: Path, data: bytes) -> int:
+        raise PermissionError("read-only vault")
+
+    monkeypatch.setattr(Path, "write_bytes", refuse)
+    code, out = run(standard_dir, vault, FakeGithub(), capsys, "--execute")
+    assert code == 1
+    assert f"issue {ISSUE_URL} exists but the note was not updated" in out
+
+
+def test_github_listing_failure_is_exit_1(
+    standard_dir: Path,
+    vault: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    def broken(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 1, "", "gh: Server Error (HTTP 500)\n")
+
+    put(vault, "Better retries", idea())
+    argv = ["ideas", "--standard-dir", str(standard_dir), "--vault", str(vault)]
+    assert main(argv, Gh(OWNER, broken)) == 1
+    assert "cannot read GitHub" in capsys.readouterr().err

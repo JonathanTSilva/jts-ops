@@ -47,3 +47,6 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["jts_ops"]
+
+[tool.coverage.report]
+fail_under = 97

@@ -18,7 +18,11 @@ from jts_ops.vault import (
     NOTES_DIR,
     START,
     RepoExtra,
+    fetch_extra,
     note_filename,
+    note_repo,
+    read_properties,
+    read_tag_registry,
     render_note,
 )
 
@@ -622,3 +626,105 @@ def test_key_is_linear_on_long_lines():
     _KEY.match("a" * 10_000 + ":x")
     _KEY.match("a-" * 5_000 + " ")
     assert time.perf_counter() - start < 0.1
+
+
+# ------------------------------------------------------------------ unreadable frontmatter
+
+
+def test_unclosed_frontmatter_is_not_frontmatter():
+    assert read_properties("---\nrepo: ai-helper\nno closing line\n") == {}
+    assert note_repo("---\nrepo: ai-helper\n") is None
+
+
+def test_properties_that_are_not_valid_yaml_are_left_out():
+    text = "---\nbroken: [unclosed\ngithub: idea\n---\n# T\n"
+    assert read_properties(text) == {"github": "idea"}
+
+
+def test_lines_before_the_first_key_are_not_properties():
+    text = "---\n# a comment\nrepo: ai-helper\n---\nBody\n"
+    assert read_properties(text) == {"repo": "ai-helper"}
+
+
+def test_note_repo_needs_a_readable_non_empty_text_value():
+    assert note_repo("---\nrepo: ai-helper\n---\n") == "ai-helper"
+    assert note_repo("---\nrepo: [unclosed\n---\n") is None
+    assert note_repo("---\nrepo: 7\n---\n") is None
+    assert note_repo("---\nrepo:\n---\n") is None
+    assert note_repo("---\ntitle: x\n---\n") is None
+
+
+def test_an_owned_property_that_is_not_valid_yaml_is_rewritten():
+    existing = render()
+    assert existing is not None
+    broken = existing.replace("stack: python", "stack: [unclosed", 1)
+    fixed = render(broken)
+    assert fixed is not None
+    assert "stack: python" in frontmatter(fixed)
+
+
+def test_an_empty_owned_property_counts_as_empty_text():
+    existing = render(entry=make_entry(), extra=RepoExtra("none", "", 0))
+    assert existing is not None
+    assert "last_release: ''" in existing
+    assert render(existing, extra=RepoExtra("none", "", 0)) is None
+
+
+def test_missing_tag_registry_allows_no_kind_tag(tmp_path: Path):
+    assert read_tag_registry(tmp_path) == frozenset()
+
+
+def test_tag_registry_without_allowed_list_is_empty(tmp_path: Path):
+    path = tmp_path / "99-Meta" / "Schema" / "tags.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("aliases: {}\n", encoding="utf-8")
+    assert read_tag_registry(tmp_path) == frozenset()
+
+
+class ExtraGithub:
+    """Answers the release and issue reads of `fetch_extra`, with a chosen failure for each."""
+
+    def __init__(self, release_status: int | None = None, issues_status: int | None = None):
+        self.release_status = release_status
+        self.issues_status = issues_status
+
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        path = next(a for a in args if a.startswith("/"))
+        status = self.release_status if path.endswith("/releases/latest") else self.issues_status
+        if status is not None:
+            return subprocess.CompletedProcess(args, 1, "", f"gh: error (HTTP {status})\n")
+        if path.endswith("/releases/latest"):
+            return subprocess.CompletedProcess(args, 0, json.dumps({"tag_name": "v3"}), "")
+        issues: list[object] = [{"number": 1}, {"number": 2, "pull_request": {}}]
+        return subprocess.CompletedProcess(args, 0, json.dumps([issues]), "")
+
+
+def test_fetch_extra_counts_issues_but_not_pull_requests():
+    extra = fetch_extra(Gh(OWNER, ExtraGithub()), {"name": "ai-helper", "language": "Go"})
+    assert extra == RepoExtra("go", "v3", 1)
+
+
+def test_fetch_extra_tolerates_no_release_and_disabled_issues():
+    gh = Gh(OWNER, ExtraGithub(release_status=404, issues_status=410))
+    assert fetch_extra(gh, {"name": "ai-helper"}) == RepoExtra("none", "", 0)
+
+
+def test_fetch_extra_raises_on_other_errors():
+    from jts_ops.gh import GhError
+
+    with pytest.raises(GhError):
+        fetch_extra(Gh(OWNER, ExtraGithub(release_status=500)), {"name": "ai-helper"})
+    with pytest.raises(GhError):
+        fetch_extra(Gh(OWNER, ExtraGithub(issues_status=500)), {"name": "ai-helper"})
+
+
+def test_a_note_that_is_not_utf8_is_ignored_when_matching_notes(
+    standard_dir: Path, vault: Path, capsys: pytest.CaptureFixture[str]
+):
+    notes = vault / NOTES_DIR
+    notes.mkdir(parents=True)
+    (notes / "binary.md").write_bytes(b"\xff\xfe\x00")
+    fake = FakeGithub([repo_json("ai-helper")])
+    code, summary = run(standard_dir, vault, fake, capsys)
+    assert code == 0
+    assert "created 1" in summary
