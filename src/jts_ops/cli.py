@@ -56,6 +56,37 @@ from jts_ops.vault import sync_vault
 STANDARD_DIR_ENV = "JTS_STANDARD_DIR"
 
 
+DEFAULT_PROJECTS_DIR = Path("~/Projects")
+
+
+class UserPathError(ValueError):
+    """A user-supplied path is outside the allowed roots or has the wrong kind."""
+
+
+def _resolve_user_path(p: Path, *, roots: Sequence[Path], must_exist: bool) -> Path:
+    """Resolve `p` (symlinks followed) and require it to sit under one of `roots`.
+
+    With `must_exist` the result must also be a regular file.
+    """
+    resolved = p.expanduser().resolve()
+    if not any(resolved.is_relative_to(root.expanduser().resolve()) for root in roots):
+        allowed = ", ".join(str(root.expanduser().resolve()) for root in roots)
+        raise UserPathError(
+            f"path {p} resolves to {resolved}, outside the allowed folders: {allowed}"
+        )
+    if must_exist and not resolved.is_file():
+        raise UserPathError(f"not a regular file: {resolved}")
+    return resolved
+
+
+def _confined(
+    p: Path, projects_dir: Path = DEFAULT_PROJECTS_DIR, *, must_exist: bool = False
+) -> Path:
+    """`_resolve_user_path` with the standard roots: the cwd and `<projects-dir>/_reports`."""
+    roots = (Path.cwd(), projects_dir.expanduser() / "_reports")
+    return _resolve_user_path(p, roots=roots, must_exist=must_exist)
+
+
 def default_standard_dir() -> Path:
     return Path(os.environ.get(STANDARD_DIR_ENV, "~/Projects/.github")).expanduser()
 
@@ -315,6 +346,12 @@ def collect(
 
 
 def run_audit(args: argparse.Namespace, gh: Gh | None = None) -> int:
+    try:
+        json_out = _confined(args.json) if args.json else None
+        markdown_out = _confined(args.markdown) if args.markdown else None
+    except UserPathError as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 2
     standard_dir: Path = args.standard_dir or default_standard_dir()
     std = load_standard(standard_dir)
     inventory = load_inventory(standard_dir)
@@ -325,10 +362,10 @@ def run_audit(args: argparse.Namespace, gh: Gh | None = None) -> int:
         print(f"jts-ops: cannot list repos: {err.message}", file=sys.stderr)
         return 1
     report = build_report(results, public_only=args.public_only)
-    if args.json:
-        args.json.write_text(report.to_json(), encoding="utf-8")
-    if args.markdown:
-        args.markdown.write_text(report.to_markdown(), encoding="utf-8")
+    if json_out:
+        json_out.write_text(report.to_json(), encoding="utf-8")
+    if markdown_out:
+        markdown_out.write_text(report.to_markdown(), encoding="utf-8")
     s = report.summary
     print(
         f"audited {s['total']} repos: {s['compliant']} compliant ({s['percent']}%), "
@@ -340,8 +377,11 @@ def run_audit(args: argparse.Namespace, gh: Gh | None = None) -> int:
 def run_badges(args: argparse.Namespace) -> int:
     dashboard = json.loads(args.source.read_text(encoding="utf-8"))
     try:
-        written = write_badges(dashboard, args.out)
-    except ValueError as err:
+        out = _confined(args.out)
+        if out.exists() and not out.is_dir():
+            raise UserPathError(f"not a directory: {out}")
+        written = write_badges(dashboard, args.out)  # also rejects a `..` segment
+    except ValueError as err:  # includes UserPathError
         print(f"jts-ops: {err}", file=sys.stderr)
         return 2
     for path in written:
@@ -456,7 +496,16 @@ def run_migrate(args: argparse.Namespace, gh: Gh | None = None) -> int:
     if args.execute and args.plan is None:
         print("jts-ops: --execute requires --plan FILE from a reviewed dry run", file=sys.stderr)
         return 3
-    plan_file: Path | None = args.plan
+    plan_file: Path | None = None
+    plan_out: Path | None = None
+    try:
+        if args.plan is not None:
+            plan_file = _confined(args.plan, args.projects_dir, must_exist=True)
+        if args.plan_out:
+            plan_out = _confined(args.plan_out, args.projects_dir)
+    except UserPathError as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 2
     approved: tuple[str, list[Step]] | None = None
     if args.execute and plan_file is not None:
         approved = _load_plan(plan_file)
@@ -514,9 +563,9 @@ def run_migrate(args: argparse.Namespace, gh: Gh | None = None) -> int:
         )
         return 3
 
-    if args.plan_out:
+    if plan_out:
         rows = [{"repo": s.repo, "action": s.action, "payload": s.payload} for s in steps]
-        args.plan_out.write_text(
+        plan_out.write_text(
             json.dumps({"digest": digest, "steps": rows}, indent=2) + "\n", encoding="utf-8"
         )
     last_repo = None
