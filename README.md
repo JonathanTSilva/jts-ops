@@ -78,7 +78,7 @@ jts-ops new my-tool --kind product --stack python --visibility public \
 |---|---|---|
 | `JTS_STANDARD_DIR` or `--standard-dir` | `~/Projects/.github` | Directory with `standard.yml`, `labels.yml` and `inventory.yml` |
 | `JTS_PRIVATE_INVENTORY` | `~/.config/jts-ops/inventory.private.yml` | Inventory of private repos, same schema as `inventory.yml` |
-| `JTS_IGNORED_REPOS` | `~/.config/jts-ops/ignored.txt` | Repos that are not part of the system, one name per line (`#` comments). Every command skips them. Keep it out of repos: names may be private |
+| `JTS_IGNORED_REPOS` | `~/.config/jts-ops/ignored.txt` | Repos that are not part of the system, one name per line (`#` comments). Every command skips them. Forks are always skipped, listed or not. Keep it out of repos: names may be private |
 | `JTS_COPIER` | `copier` | Command used to render the template in `new` |
 
 The public `inventory.yml` lists public repos only. Private repos live in the private inventory file, which never goes in a public repository. jts-ops merges both; a missing private file means public entries only, and a name in both files is an error.
