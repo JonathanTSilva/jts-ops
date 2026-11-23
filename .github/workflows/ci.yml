@@ -18,7 +18,7 @@ jobs:
   docs:
     permissions:
       contents: read
-    uses: JonathanTSilva/.github/.github/workflows/lint-docs.yml@v1
+    uses: JonathanTSilva/.github/.github/workflows/lint-docs.yml@d4c4eb71e7c2b8d73aae9e1ba385ec16fb8f787a
 
   security:
     # GitHub checks caller permissions statically, so all of them are granted
