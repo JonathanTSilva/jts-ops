@@ -58,6 +58,8 @@ Or open the repository in a dev container or GitHub Codespaces, which runs the s
 | Lint | `uv run ruff check` and `uv run pyright` |
 | Format | `uv run ruff format` |
 
+Run `pre-commit run --all-files` before you commit. In Claude Code it always asks for approval, because hooks run any command `.pre-commit-config.yaml` lists. For the same reason, never change `.pre-commit-config.yaml` without saying so in the pull request.
+
 CI runs the same checks through the shared workflows in [`.github`](https://github.com/JonathanTSilva/.github). The single required check is `ci`.
 
 ## Conventions
