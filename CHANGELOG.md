@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/JonathanTSilva/jts-ops/compare/v1.1.0...v1.1.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **adopt:** render template v1.5.1 ([#86](https://github.com/JonathanTSilva/jts-ops/issues/86)) ([f1e5086](https://github.com/JonathanTSilva/jts-ops/commit/f1e5086010ecc5553494b1e3dc38774f8b7c2703)), closes [#85](https://github.com/JonathanTSilva/jts-ops/issues/85)
+
 ## [1.1.0](https://github.com/JonathanTSilva/jts-ops/compare/v1.0.0...v1.1.0) (2026-11-23)
 
 
