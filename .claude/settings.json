@@ -1,19 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git status)",
-      "Bash(git diff)",
-      "Bash(git diff --stat)",
-      "Bash(git diff --staged)",
-      "Bash(git log --oneline -20)",
       "Bash(uv sync*)",
       "Bash(uv run pytest*)",
       "Bash(uv run ruff*)",
       "Bash(uv run pyright*)",
-      "Bash(pre-commit run --all-files)"
+      "Bash(git status)",
+      "Bash(git diff)",
+      "Bash(git diff --stat)",
+      "Bash(git diff --staged)",
+      "Bash(git log --oneline -20)"
     ],
     "deny": [
       "Read(./.env*)",
+      "Edit(/.git/**)",
       "Bash(git push --force*)",
       "Bash(git push -f*)",
       "Bash(git diff*--output*)",
