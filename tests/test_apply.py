@@ -14,7 +14,9 @@ from jts_ops.apply import (
     RULESET_BODY,
     Change,
     ReleaseTokenError,
+    ci_passes_release_token,
     execute,
+    has_release_token,
     load_release_token,
     plan_changes,
 )
@@ -529,7 +531,13 @@ def test_dry_run_locks_even_a_writable_gh(standard_dir: Path):
 # --- release-please token --------------------------------------------------------------------
 
 TOKEN = "github_pat_example_value"
-RELEASE_CI = "jobs:\n  release:\n    secrets:\n      token: ${{ secrets.RELEASE_PLEASE_TOKEN }}\n"
+RELEASE_CI = """\
+jobs:
+  release:
+    uses: ExampleOwner/.github/.github/workflows/release.yml@0123abcd # v1.2.4
+    secrets:
+      token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+"""
 
 
 class FakeSetter:
@@ -763,3 +771,34 @@ def test_execute_release_secret_needs_a_setter():
     gh = Gh("ExampleOwner", FakeGithub(helper_repo()), read_only=False)
     [(_, reason)] = execute([change], gh, None, TOKEN)
     assert "setter" in reason
+
+
+def test_ci_passes_release_token_only_for_the_shared_release_workflow():
+    assert ci_passes_release_token(RELEASE_CI, "ExampleOwner")
+    assert not ci_passes_release_token(RELEASE_CI, "SomeoneElse")
+    assert not ci_passes_release_token(
+        "# token: ${{ secrets.RELEASE_PLEASE_TOKEN }}\n", "ExampleOwner"
+    )
+    other_job = """\
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./upload.sh
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+"""
+    assert not ci_passes_release_token(other_job, "ExampleOwner")
+    inherit = RELEASE_CI.replace(
+        "    secrets:\n      token: ${{ secrets.RELEASE_PLEASE_TOKEN }}\n", "    secrets: inherit\n"
+    )
+    assert not ci_passes_release_token(inherit, "ExampleOwner")
+    other_workflow = RELEASE_CI.replace("release.yml@", "deploy.yml@")
+    assert not ci_passes_release_token(other_workflow, "ExampleOwner")
+    for broken in ("jobs: [", "just text", "jobs: []", "jobs:\n  x: 1\n", ""):
+        assert not ci_passes_release_token(broken, "ExampleOwner")
+
+
+def test_has_release_token():
+    assert has_release_token(TOKEN) is True
+    assert has_release_token(None) is False

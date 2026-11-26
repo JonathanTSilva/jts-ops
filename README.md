@@ -57,7 +57,7 @@ jts-ops apply --repo my-repo --repo other-repo
 jts-ops apply --execute             # make the changes
 ```
 
-For an active repo whose `ci.yml` uses `secrets.RELEASE_PLEASE_TOKEN`, `apply` also sets that Actions secret when it is missing, so release PRs trigger CI. It reads the token from `RELEASE_PLEASE_TOKEN`, else from `~/.config/jts-ops/release-please-token`, which it refuses unless only you can read it (`chmod 600`). The value goes to `gh secret set` on stdin and is never printed. Without a token, `apply` prints a skip line instead. An existing secret is never replaced, because GitHub does not return its value.
+For an active repo whose `ci.yml` has a job calling the shared `release.yml` workflow with `token: ${{ secrets.RELEASE_PLEASE_TOKEN }}`, `apply` also sets that Actions secret when it is missing, so release PRs trigger CI. A fine-grained token only works on the repos it was granted, so add a new repo to the token's repository access in GitHub as well. It reads the token from `RELEASE_PLEASE_TOKEN`, else from `~/.config/jts-ops/release-please-token`, which it refuses unless only you can read it (`chmod 600`). The value goes to `gh secret set` on stdin and is never printed. Without a token, `apply` prints a skip line instead. An existing secret is never replaced, because GitHub does not return its value.
 
 Create a compliant repo. Without `--execute` it only lists the steps:
 

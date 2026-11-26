@@ -10,8 +10,10 @@ import stat
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import quote
+
+import yaml
 
 from jts_ops.gh import Gh, GhError, ReadOnlyError
 from jts_ops.inventory import InventoryEntry
@@ -36,7 +38,7 @@ RULESET_NAME = "main"
 # The Actions secret a repo's ci.yml hands to the shared release workflow. Release PRs opened
 # with it (rather than GITHUB_TOKEN) trigger CI, so the required `ci` check runs on them.
 RELEASE_SECRET = "RELEASE_PLEASE_TOKEN"
-RELEASE_SECRET_REF = f"secrets.{RELEASE_SECRET}"
+RELEASE_SECRET_EXPR = "${{ secrets." + RELEASE_SECRET + " }}"
 RELEASE_TOKEN_ENV = RELEASE_SECRET
 RELEASE_TOKEN_FILE_ENV = "JTS_RELEASE_TOKEN_FILE"
 RELEASE_TOKEN_FILE = "~/.config/jts-ops/release-please-token"
@@ -73,6 +75,47 @@ def load_release_token(environ: Mapping[str, str], path: Path) -> str | None:
     if mode & (stat.S_IRWXG | stat.S_IRWXO):
         raise ReleaseTokenError(f"{path} is readable by others; run: chmod 600 {path}")
     return path.read_text(encoding="utf-8").strip() or None
+
+
+def has_release_token(token: str | None) -> bool:
+    """Whether a token is available. Returns a literal, so nothing of the value flows on."""
+    # `return token is not None` would carry the value's data flow into everything planned
+    # and printed from it (CodeQL py/clear-text-logging-sensitive-data). Keep the literals.
+    if token is None:  # noqa: SIM103
+        return False
+    return True
+
+
+def ci_passes_release_token(ci_text: str, owner: str) -> bool:
+    """True when a ci.yml job calls the owner's shared release workflow with the secret.
+
+    Only that exact shape counts: a comment, an unrelated job or another workflow that names
+    the secret does not, so `apply` never hands the token to a repo for some other use.
+    """
+    try:
+        data: Any = yaml.safe_load(ci_text)
+    except yaml.YAMLError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    jobs: Any = cast("dict[str, Any]", data).get("jobs")
+    if not isinstance(jobs, dict):
+        return False
+    workflow = f"{owner}/.github/.github/workflows/release.yml@"
+    for job in cast("dict[str, Any]", jobs).values():
+        if not isinstance(job, dict):
+            continue
+        fields = cast("dict[str, Any]", job)
+        uses: Any = fields.get("uses")
+        secrets: Any = fields.get("secrets")
+        if (
+            isinstance(uses, str)
+            and uses.startswith(workflow)
+            and isinstance(secrets, dict)
+            and cast("dict[str, Any]", secrets).get("token") == RELEASE_SECRET_EXPR
+        ):
+            return True
+    return False
 
 
 ACTIVE_SETTINGS: dict[str, Any] = {

@@ -15,13 +15,14 @@ from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
 from jts_ops.apply import (
     CI_WORKFLOW,
     RELEASE_SECRET,
-    RELEASE_SECRET_REF,
     RULESET_NAME,
     ReleaseSecret,
     ReleaseTokenError,
     SecretSetter,
+    ci_passes_release_token,
     default_release_token_path,
     execute,
+    has_release_token,
     load_release_token,
     plan_changes,
     ruleset_eligible,
@@ -437,7 +438,8 @@ def _release_secret_state(
 ) -> ReleaseSecret | None:
     """Whether an active repo's ci.yml uses RELEASE_PLEASE_TOKEN and the secret exists.
 
-    None when the repo is not active, has no ci.yml, or its ci.yml does not use the secret.
+    None when the repo is not active, has no ci.yml, or no ci.yml job passes the secret to the
+    owner's shared release workflow (see `ci_passes_release_token`).
     Only the secret's name is read: GitHub never returns a secret value.
     """
     if entry is None or entry.profile != "active" or state.archived:
@@ -452,7 +454,7 @@ def _release_secret_state(
             return None
         raise
     text = base64.b64decode(ci.get("content", "")).decode("utf-8", errors="replace")
-    if RELEASE_SECRET_REF not in text:
+    if not ci_passes_release_token(text, gh.owner):
         return None
     try:
         gh.api(f"{base}/actions/secrets/{RELEASE_SECRET}")
@@ -475,6 +477,7 @@ def run_apply(
     except ReleaseTokenError as err:
         print(f"jts-ops: {err}", file=sys.stderr)
         return 2
+    token_available = has_release_token(release_token)
     standard_dir: Path = args.standard_dir or default_standard_dir()
     std = load_standard(standard_dir)
     inventory = load_inventory(standard_dir)
@@ -521,7 +524,7 @@ def run_apply(
                 rulesets,
                 codeql,
                 release_secret=release_secret,
-                release_token=release_token is not None,
+                release_token=token_available,
             )
         except GhError as err:
             reason = (err.message.splitlines() or ["unknown error"])[0]
