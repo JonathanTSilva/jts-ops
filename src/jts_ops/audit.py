@@ -23,6 +23,10 @@ _SPECIAL_CHECKS = ("inventory.missing", "license.missing", "wiki.enabled")
 COPIER_ANSWERS = ".copier-answers.yml"
 _NO_ANSWERS_KINDS = ("template",)
 
+# OpenSSF Best Practices answers, rendered into the repo by the template.
+BESTPRACTICES_FILE = ".bestpractices.json"
+_BESTPRACTICES_STATUSES = ("wip", "active")
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -77,6 +81,13 @@ def audit_repo(state: RepoState, entry: InventoryEntry | None, std: Standard) ->
 
     if profile == "active":
         _audit_active(state, entry.kind, std, add)
+        if _wants_bestpractices(state, entry):
+            add(
+                "files.bestpractices",
+                "warning",
+                f"missing {BESTPRACTICES_FILE} (OpenSSF Best Practices answers; "
+                "render it with copier update)",
+            )
 
     if profile == "archived":
         if not state.archived:
@@ -87,6 +98,18 @@ def audit_repo(state: RepoState, entry: InventoryEntry | None, std: Standard) ->
             add("archived.banner", "warning", "README has no archive banner")
 
     return sorted(found, key=lambda f: (f.check, f.message))
+
+
+def _wants_bestpractices(state: RepoState, entry: InventoryEntry) -> bool:
+    """True when a public, live, Copier-managed repo lacks its Best Practices answers."""
+    return (
+        not state.private
+        and not state.archived
+        and entry.status in _BESTPRACTICES_STATUSES
+        and state.files is not None
+        and COPIER_ANSWERS in state.files
+        and BESTPRACTICES_FILE not in state.files
+    )
 
 
 def _audit_active(state: RepoState, kind: str, std: Standard, add: Any) -> None:

@@ -149,6 +149,68 @@ def test_copier_answers_required_except_for_template_kind(
     ] == []
 
 
+BP_FILES = frozenset({"README.md", "LICENSE", "AGENTS.md", ".claude/settings.json"}) | {
+    ".copier-answers.yml"
+}
+
+
+def bp_findings(state: RepoState, ent: InventoryEntry, std: Standard) -> list[Finding]:
+    return [f for f in audit_repo(state, ent, std) if f.check == "files.bestpractices"]
+
+
+def test_bestpractices_present_has_no_finding(std: Standard, inv: dict[str, InventoryEntry]):
+    state = good_state(files=BP_FILES | {".bestpractices.json"})
+    assert bp_findings(state, inv["ai-helper"], std) == []
+
+
+@pytest.mark.parametrize("status", ["wip", "active"])
+def test_bestpractices_missing_on_live_public_repo_is_warning(
+    std: Standard, inv: dict[str, InventoryEntry], status: str
+):
+    found = bp_findings(good_state(files=BP_FILES), entry(inv, status=status), std)
+    assert [(f.severity, f.message) for f in found] == [
+        (
+            "warning",
+            "missing .bestpractices.json (OpenSSF Best Practices answers; "
+            "render it with copier update)",
+        )
+    ]
+
+
+@pytest.mark.parametrize("status", ["maintained", "archived", "idea"])
+def test_bestpractices_not_required_for_inactive_status(
+    std: Standard, inv: dict[str, InventoryEntry], status: str
+):
+    assert bp_findings(good_state(files=BP_FILES), entry(inv, status=status), std) == []
+
+
+def test_bestpractices_not_required_for_private_repo(std: Standard, inv: dict[str, InventoryEntry]):
+    state = good_state(files=BP_FILES, private=True)
+    assert bp_findings(state, entry(inv, visibility="private"), std) == []
+
+
+def test_bestpractices_not_required_for_archived_repo(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    assert bp_findings(good_state(files=BP_FILES, archived=True), inv["ai-helper"], std) == []
+
+
+def test_bestpractices_needs_copier_answers_and_a_file_listing(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    no_answers = good_state(files=BP_FILES - {".copier-answers.yml"})
+    assert bp_findings(no_answers, inv["ai-helper"], std) == []
+    assert bp_findings(good_state(files=None), inv["ai-helper"], std) == []
+
+
+def test_bestpractices_skipped_for_special_profile(std: Standard, inv: dict[str, InventoryEntry]):
+    special = entry(
+        inv, name="ExampleOwner", target="ExampleOwner", kind="special", profile="special"
+    )
+    state = good_state(name="ExampleOwner", files=BP_FILES)
+    assert bp_findings(state, special, std) == []
+
+
 def test_settings_merge(std: Standard, inv: dict[str, InventoryEntry]):
     state = good_state(allow_merge_commit=True, delete_branch_on_merge=False)
     found = checks(audit_repo(state, inv["ai-helper"], std))
