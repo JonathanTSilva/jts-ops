@@ -154,7 +154,10 @@ def _value_of(entry: _Entry) -> Any:
 
 def _dump(value: Any) -> str:
     """One YAML value on one line, in the flow style the vault uses for lists."""
-    text = yaml.safe_dump(value, default_flow_style=True, width=1_000_000, allow_unicode=True)
+    # types-pyyaml 6.0.12.20261122 types safe_dump's `width` as partially unknown.
+    text = yaml.safe_dump(  # pyright: ignore[reportUnknownMemberType]
+        value, default_flow_style=True, width=1_000_000, allow_unicode=True
+    )
     return text.removesuffix("\n...\n").rstrip("\n")
 
 
