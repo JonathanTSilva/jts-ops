@@ -22,7 +22,6 @@ from jts_ops.apply import (
     ci_passes_release_token,
     default_release_token_path,
     execute,
-    has_release_token,
     load_release_token,
     plan_changes,
     ruleset_eligible,
@@ -477,7 +476,6 @@ def run_apply(
     except ReleaseTokenError as err:
         print(f"jts-ops: {err}", file=sys.stderr)
         return 2
-    token_available = has_release_token(release_token)
     standard_dir: Path = args.standard_dir or default_standard_dir()
     std = load_standard(standard_dir)
     inventory = load_inventory(standard_dir)
@@ -524,7 +522,7 @@ def run_apply(
                 rulesets,
                 codeql,
                 release_secret=release_secret,
-                release_token=token_available,
+                release_token=release_token is not None,
             )
         except GhError as err:
             reason = (err.message.splitlines() or ["unknown error"])[0]

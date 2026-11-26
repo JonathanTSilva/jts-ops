@@ -16,7 +16,6 @@ from jts_ops.apply import (
     ReleaseTokenError,
     ci_passes_release_token,
     execute,
-    has_release_token,
     load_release_token,
     plan_changes,
 )
@@ -799,6 +798,14 @@ jobs:
         assert not ci_passes_release_token(broken, "ExampleOwner")
 
 
-def test_has_release_token():
-    assert has_release_token(TOKEN) is True
-    assert has_release_token(None) is False
+def test_printed_release_texts_name_the_real_secret_and_file():
+    from jts_ops.apply import (
+        RELEASE_SETUP_HINT,
+        RELEASE_SETUP_REASON,
+        RELEASE_TOKEN_ENV,
+        RELEASE_TOKEN_FILE,
+    )
+
+    assert RELEASE_SETUP_HINT.startswith(f"{RELEASE_SECRET} missing; export {RELEASE_TOKEN_ENV} ")
+    assert RELEASE_TOKEN_FILE in RELEASE_SETUP_HINT
+    assert RELEASE_SETUP_REASON.startswith(f"set {RELEASE_SECRET} ")
