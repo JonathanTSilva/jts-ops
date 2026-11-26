@@ -57,6 +57,8 @@ jts-ops apply --repo my-repo --repo other-repo
 jts-ops apply --execute             # make the changes
 ```
 
+For an active repo whose `ci.yml` uses `secrets.RELEASE_PLEASE_TOKEN`, `apply` also sets that Actions secret when it is missing, so release PRs trigger CI. It reads the token from `RELEASE_PLEASE_TOKEN`, else from `~/.config/jts-ops/release-please-token`, which it refuses unless only you can read it (`chmod 600`). The value goes to `gh secret set` on stdin and is never printed. Without a token, `apply` prints a skip line instead. An existing secret is never replaced, because GitHub does not return its value.
+
 Create a compliant repo. Without `--execute` it only lists the steps:
 
 ```sh
@@ -80,6 +82,8 @@ jts-ops new my-tool --kind product --stack python --visibility public \
 | `JTS_PRIVATE_INVENTORY` | `~/.config/jts-ops/inventory.private.yml` | Inventory of private repos, same schema as `inventory.yml` |
 | `JTS_IGNORED_REPOS` | `~/.config/jts-ops/ignored.txt` | Repos that are not part of the system, one name per line (`#` comments). Every command skips them. Forks are always skipped, listed or not. Keep it out of repos: names may be private |
 | `JTS_COPIER` | `copier` | Command used to render the template in `new` |
+| `RELEASE_PLEASE_TOKEN` | unset | Token `apply` stores as the `RELEASE_PLEASE_TOKEN` secret on repos that release. Wins over the file below |
+| `JTS_RELEASE_TOKEN_FILE` | `~/.config/jts-ops/release-please-token` | File holding that token, mode `0600` or stricter, or `apply` refuses to run |
 
 The public `inventory.yml` lists public repos only. Private repos live in the private inventory file, which never goes in a public repository. jts-ops merges both; a missing private file means public entries only, and a name in both files is an error.
 

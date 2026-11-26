@@ -5,12 +5,15 @@ what would change plus the reasons something was left alone. `execute` performs 
 Nothing here renames, archives, changes visibility or deletes anything.
 """
 
-from collections.abc import Iterable
+import os
+import stat
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
 
-from jts_ops.gh import Gh, GhError
+from jts_ops.gh import Gh, GhError, ReadOnlyError
 from jts_ops.inventory import InventoryEntry
 from jts_ops.standard import Standard
 from jts_ops.state import LabelInfo, RepoState
@@ -24,10 +27,53 @@ Kind = Literal[
     "codeql-default-setup",
     "security",
     "ruleset",
+    "release-secret",
 ]
 
 CI_WORKFLOW = ".github/workflows/ci.yml"
 RULESET_NAME = "main"
+
+# The Actions secret a repo's ci.yml hands to the shared release workflow. Release PRs opened
+# with it (rather than GITHUB_TOKEN) trigger CI, so the required `ci` check runs on them.
+RELEASE_SECRET = "RELEASE_PLEASE_TOKEN"
+RELEASE_SECRET_REF = f"secrets.{RELEASE_SECRET}"
+RELEASE_TOKEN_ENV = RELEASE_SECRET
+RELEASE_TOKEN_FILE_ENV = "JTS_RELEASE_TOKEN_FILE"
+RELEASE_TOKEN_FILE = "~/.config/jts-ops/release-please-token"
+RELEASE_TOKEN_HINT = (
+    f"{RELEASE_SECRET} missing; export {RELEASE_TOKEN_ENV} or put the token in "
+    f"{RELEASE_TOKEN_FILE} (chmod 600), then re-run with --execute"
+)
+
+ReleaseSecret = Literal["present", "missing"]
+SecretSetter = Callable[[str, str, str, str], None]  # (owner, repo, name, value)
+
+
+class ReleaseTokenError(Exception):
+    """The release-please token file exists but is unsafe to read."""
+
+
+def default_release_token_path() -> Path:
+    """`$JTS_RELEASE_TOKEN_FILE`, else `~/.config/jts-ops/release-please-token`."""
+    return Path(os.environ.get(RELEASE_TOKEN_FILE_ENV) or RELEASE_TOKEN_FILE).expanduser()
+
+
+def load_release_token(environ: Mapping[str, str], path: Path) -> str | None:
+    """The token from `$RELEASE_PLEASE_TOKEN`, else from `path`; None when neither has one.
+
+    The file is refused when its group or others can access it, like an SSH key.
+    """
+    from_env = environ.get(RELEASE_TOKEN_ENV, "").strip()
+    if from_env:
+        return from_env
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError:
+        return None
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise ReleaseTokenError(f"{path} is readable by others; run: chmod 600 {path}")
+    return path.read_text(encoding="utf-8").strip() or None
+
 
 ACTIVE_SETTINGS: dict[str, Any] = {
     "allow_squash_merge": True,
@@ -197,11 +243,16 @@ def plan_changes(
     std: Standard,
     existing_rulesets: list[dict[str, Any]] | None = None,
     codeql_state: str | None = None,
+    release_secret: ReleaseSecret | None = None,
+    release_token: bool = False,
 ) -> tuple[list[Change], list[str]]:
     """Return (changes, skip reasons) for one repo. Pure: makes no API calls.
 
     `codeql_state` is the repo's current default-setup state: "configured", "not-configured",
     "unavailable" (unsupported or no languages), or None when it was not read.
+    `release_secret` says whether the repo's ci.yml needs `RELEASE_PLEASE_TOKEN` and has it:
+    "present", "missing", or None when ci.yml does not use it (or it was not read).
+    `release_token` is whether a token value is available to set it with.
     """
     name = state.name
     if state.archived:
@@ -326,6 +377,20 @@ def plan_changes(
                     f"update ruleset {RULESET_NAME} to the standard rules",
                 )
             )
+
+    # Release-please token: only added when missing; an existing value is never replaced.
+    if profile == "active" and release_secret == "missing":
+        if release_token:
+            changes.append(
+                Change(
+                    name,
+                    "release-secret",
+                    {"name": RELEASE_SECRET},
+                    f"set {RELEASE_SECRET} (ci.yml runs release-please)",
+                )
+            )
+        else:
+            skips.append(RELEASE_TOKEN_HINT)
     return changes, skips
 
 
@@ -333,9 +398,20 @@ def _repo_path(gh: Gh, change: Change, suffix: str = "") -> str:
     return f"/repos/{gh.owner}/{change.repo}{suffix}"
 
 
-def _apply_one(change: Change, gh: Gh) -> None:
+def _apply_one(
+    change: Change, gh: Gh, set_secret: SecretSetter | None, release_token: str | None
+) -> None:
     payload = change.payload
     match change.kind:
+        case "release-secret":
+            # Not an API call, so Gh's own dry-run guard does not see it: check it here.
+            if gh.read_only:
+                raise ReadOnlyError(f"refusing to set {payload['name']}: read-only mode")
+            if not release_token:
+                raise ValueError(f"no release-please token to set {payload['name']} with")
+            if set_secret is None:
+                raise ValueError("internal: no secret setter")
+            set_secret(gh.owner, change.repo, payload["name"], release_token)
         case "settings" | "description":
             gh.api(_repo_path(gh, change), "PATCH", body=payload)
         case "topics":
@@ -370,15 +446,21 @@ def _apply_one(change: Change, gh: Gh) -> None:
                 )
 
 
-def execute(changes: list[Change], gh: Gh) -> list[tuple[Change, str]]:
+def execute(
+    changes: list[Change],
+    gh: Gh,
+    set_secret: SecretSetter | None = None,
+    release_token: str | None = None,
+) -> list[tuple[Change, str]]:
     """Apply every change; a failing change is recorded and the rest still run.
 
+    `set_secret` and `release_token` are only used by "release-secret" changes.
     Returns the failures as (change, first line of the error).
     """
     failures: list[tuple[Change, str]] = []
     for change in changes:
         try:
-            _apply_one(change, gh)
+            _apply_one(change, gh, set_secret, release_token)
         except (GhError, ValueError, OSError) as err:
             message = err.message if isinstance(err, GhError) else str(err)
             failures.append((change, (message.splitlines() or ["unknown error"])[0]))

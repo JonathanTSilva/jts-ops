@@ -1,3 +1,5 @@
+import argparse
+import base64
 import json
 import subprocess
 from collections.abc import Sequence
@@ -7,9 +9,17 @@ from typing import Any
 
 import pytest
 
-from jts_ops.apply import RULESET_BODY, Change, execute, plan_changes
-from jts_ops.cli import main
-from jts_ops.gh import Gh
+from jts_ops.apply import (
+    RELEASE_SECRET,
+    RULESET_BODY,
+    Change,
+    ReleaseTokenError,
+    execute,
+    load_release_token,
+    plan_changes,
+)
+from jts_ops.cli import main, run_apply
+from jts_ops.gh import Gh, GhError, gh_secret_set
 from jts_ops.inventory import InventoryEntry
 from jts_ops.standard import Standard
 from jts_ops.state import LabelInfo, RepoState
@@ -318,11 +328,15 @@ class FakeGithub:
         fail: tuple[str, str] | None = None,
         codeql: str | int = "not-configured",
         broken: set[str] | None = None,
+        ci_text: str = "jobs: {}\n",
+        release_secret: bool = False,
     ) -> None:
         self.repos = repo if isinstance(repo, list) else [repo]
         self.fail = fail
         self.codeql = codeql
         self.broken = broken or set()
+        self.ci_text = ci_text
+        self.release_secret = release_secret
         self.calls: list[tuple[str, str, Any]] = []
 
     def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -359,6 +373,13 @@ class FakeGithub:
         if path.endswith("/rulesets"):
             no_rulesets: list[object] = []
             return ok([no_rulesets])
+        if f"/contents/{CI}?" in path:
+            encoded = base64.b64encode(self.ci_text.encode()).decode()
+            return ok({"encoding": "base64", "content": encoded})
+        if path.endswith(f"/actions/secrets/{RELEASE_SECRET}"):
+            if not self.release_secret:
+                return subprocess.CompletedProcess(args, 1, "", "gh: Not Found (HTTP 404)\n")
+            return ok({"name": RELEASE_SECRET})
         raise AssertionError(path)
 
 
@@ -503,3 +524,242 @@ def test_dry_run_locks_even_a_writable_gh(standard_dir: Path):
     gh = Gh("ExampleOwner", fake, read_only=False)
     main(["apply", "--standard-dir", str(standard_dir)], gh)
     assert gh.read_only is True
+
+
+# --- release-please token --------------------------------------------------------------------
+
+TOKEN = "github_pat_example_value"
+RELEASE_CI = "jobs:\n  release:\n    secrets:\n      token: ${{ secrets.RELEASE_PLEASE_TOKEN }}\n"
+
+
+class FakeSetter:
+    """Records `gh secret set` calls instead of running them."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str, str]] = []
+
+    def __call__(self, owner: str, repo: str, name: str, value: str) -> None:
+        self.calls.append((owner, repo, name, value))
+
+
+def test_release_secret_missing_with_token_plans_a_change(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    changes, skips = plan_changes(
+        make_state(), inv["ai-helper"], std, [], release_secret="missing", release_token=True
+    )
+    secret = [c for c in changes if c.kind == "release-secret"]
+    assert len(secret) == 1
+    assert secret[0].payload == {"name": RELEASE_SECRET}
+    assert not [s for s in skips if RELEASE_SECRET in s]
+
+
+def test_release_secret_missing_without_token_is_a_skip(
+    std: Standard, inv: dict[str, InventoryEntry]
+):
+    changes, skips = plan_changes(
+        make_state(), inv["ai-helper"], std, [], release_secret="missing", release_token=False
+    )
+    assert "release-secret" not in kinds(changes)
+    hint = [s for s in skips if RELEASE_SECRET in s]
+    assert len(hint) == 1
+    assert "~/.config/jts-ops/release-please-token" in hint[0]
+
+
+@pytest.mark.parametrize("state", ["present", None])
+def test_release_secret_present_or_not_needed_plans_nothing(
+    std: Standard, inv: dict[str, InventoryEntry], state: Any
+):
+    changes, skips = plan_changes(
+        make_state(), inv["ai-helper"], std, [], release_secret=state, release_token=True
+    )
+    assert "release-secret" not in kinds(changes)
+    assert not [s for s in skips if RELEASE_SECRET in s]
+
+
+def test_execute_sets_the_release_secret_through_the_setter():
+    fake = FakeGithub(helper_repo())
+    setter = FakeSetter()
+    change = Change("ai-helper", "release-secret", {"name": RELEASE_SECRET}, "set")
+    failures = execute([change], Gh("ExampleOwner", fake, read_only=False), setter, TOKEN)
+    assert failures == []
+    assert setter.calls == [("ExampleOwner", "ai-helper", RELEASE_SECRET, TOKEN)]
+    assert fake.calls == []  # no API call carries the token
+
+
+def test_execute_release_secret_fails_cleanly_without_token_or_when_read_only():
+    setter = FakeSetter()
+    change = Change("ai-helper", "release-secret", {"name": RELEASE_SECRET}, "set")
+    writable = Gh("ExampleOwner", FakeGithub(helper_repo()), read_only=False)
+    [(_, reason)] = execute([change], writable, setter, None)
+    assert "token" in reason
+    read_only = Gh("ExampleOwner", FakeGithub(helper_repo()))
+    [(_, reason)] = execute([change], read_only, setter, TOKEN)
+    assert "read-only" in reason
+    assert setter.calls == []
+
+
+def test_load_release_token_prefers_the_environment(tmp_path: Path):
+    path = tmp_path / "token"
+    path.write_text("from-file\n")
+    path.chmod(0o600)
+    assert load_release_token({"RELEASE_PLEASE_TOKEN": f" {TOKEN}\n"}, path) == TOKEN
+    assert load_release_token({"RELEASE_PLEASE_TOKEN": "  "}, path) == "from-file"
+    assert load_release_token({}, path) == "from-file"
+    assert load_release_token({}, tmp_path / "absent") is None
+
+
+def test_load_release_token_refuses_a_file_others_can_read(tmp_path: Path):
+    path = tmp_path / "token"
+    path.write_text(TOKEN)
+    path.chmod(0o644)
+    with pytest.raises(ReleaseTokenError, match="chmod 600"):
+        load_release_token({}, path)
+    path.write_text("")
+    path.chmod(0o600)
+    assert load_release_token({}, path) is None
+
+
+def test_gh_secret_set_sends_the_value_on_stdin(monkeypatch: pytest.MonkeyPatch):
+    seen: list[tuple[list[str], str | None]] = []
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen.append((args, kwargs.get("input")))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    gh_secret_set("ExampleOwner", "ai-helper", RELEASE_SECRET, TOKEN)
+    [(args, stdin)] = seen
+    assert args == ["gh", "secret", "set", RELEASE_SECRET, "--repo", "ExampleOwner/ai-helper"]
+    assert stdin == TOKEN
+    assert not [a for a in args if TOKEN in a]
+
+
+def test_gh_secret_set_raises_on_failure(monkeypatch: pytest.MonkeyPatch):
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 1, "", "failed to set secret (HTTP 403)\n")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(GhError, match="403"):
+        gh_secret_set("ExampleOwner", "ai-helper", RELEASE_SECRET, TOKEN)
+
+
+def _apply_args(standard_dir: Path, execute: bool) -> argparse.Namespace:
+    return argparse.Namespace(standard_dir=standard_dir, repo=None, execute=execute)
+
+
+def test_cli_sets_a_missing_release_secret_from_the_token_file(
+    standard_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    token_file = tmp_path / "release-token"
+    token_file.write_text(TOKEN + "\n")
+    token_file.chmod(0o600)
+    monkeypatch.setenv("JTS_RELEASE_TOKEN_FILE", str(token_file))
+
+    dry = FakeSetter()
+    fake = FakeGithub(helper_repo(), ci_text=RELEASE_CI)
+    assert (
+        run_apply(_apply_args(standard_dir, False), Gh("ExampleOwner", fake), set_secret=dry) == 0
+    )
+    assert dry.calls == []
+    assert f"  release-secret: set {RELEASE_SECRET}" in capsys.readouterr().out
+
+    setter = FakeSetter()
+    fake = FakeGithub(helper_repo(), ci_text=RELEASE_CI)
+    code = run_apply(_apply_args(standard_dir, True), Gh("ExampleOwner", fake), set_secret=setter)
+    assert code == 0
+    assert setter.calls == [("ExampleOwner", "ai-helper", RELEASE_SECRET, TOKEN)]
+    captured = capsys.readouterr()
+    assert TOKEN not in captured.out + captured.err
+
+
+def test_cli_leaves_an_existing_or_unused_release_secret_alone(
+    standard_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    monkeypatch.setenv("RELEASE_PLEASE_TOKEN", TOKEN)
+    setter = FakeSetter()
+    present = FakeGithub(helper_repo(), ci_text=RELEASE_CI, release_secret=True)
+    run_apply(_apply_args(standard_dir, True), Gh("ExampleOwner", present), set_secret=setter)
+    unused = FakeGithub(helper_repo())
+    run_apply(_apply_args(standard_dir, True), Gh("ExampleOwner", unused), set_secret=setter)
+    assert setter.calls == []
+    assert not [p for _, p, _ in unused.calls if "/actions/secrets/" in p]
+    assert "release-secret" not in capsys.readouterr().out
+
+
+def test_cli_without_a_token_prints_a_hint_and_does_not_fail(
+    standard_dir: Path, capsys: pytest.CaptureFixture[str]
+):
+    setter = FakeSetter()
+    fake = FakeGithub(helper_repo(), ci_text=RELEASE_CI)
+    code = run_apply(_apply_args(standard_dir, True), Gh("ExampleOwner", fake), set_secret=setter)
+    assert code == 0
+    assert setter.calls == []
+    assert f"skip: {RELEASE_SECRET} missing" in capsys.readouterr().out
+
+
+def test_cli_refuses_a_token_file_others_can_read(
+    standard_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    token_file = tmp_path / "release-token"
+    token_file.write_text(TOKEN)
+    token_file.chmod(0o644)
+    monkeypatch.setenv("JTS_RELEASE_TOKEN_FILE", str(token_file))
+    fake = FakeGithub(helper_repo(), ci_text=RELEASE_CI)
+    code = run_apply(
+        _apply_args(standard_dir, True), Gh("ExampleOwner", fake), set_secret=FakeSetter()
+    )
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "chmod 600" in err and TOKEN not in err
+    assert fake.calls == []
+
+
+def _routes(**status: int) -> Any:
+    """A gh runner that answers ci.yml contents and the secret with the given HTTP statuses."""
+
+    def run(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        path = next(a for a in args if a.startswith("/"))
+        key = "secret" if "/actions/secrets/" in path else "contents"
+        code = status.get(key, 200)
+        if code != 200:
+            return subprocess.CompletedProcess(args, 1, "", f"gh: x (HTTP {code})\n")
+        if key == "contents":
+            content = base64.b64encode(RELEASE_CI.encode()).decode()
+            return subprocess.CompletedProcess(args, 0, json.dumps({"content": content}), "")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"name": RELEASE_SECRET}), "")
+
+    return run
+
+
+def test_release_secret_state_edge_cases(inv: dict[str, InventoryEntry]):
+    from jts_ops.cli import _release_secret_state  # pyright: ignore[reportPrivateUsage]
+
+    entry = inv["ai-helper"]
+    ok = Gh("ExampleOwner", _routes())
+    assert _release_secret_state(ok, make_state(), entry) == "present"
+    assert _release_secret_state(ok, make_state(), None) is None
+    assert _release_secret_state(ok, make_state(name="hidden-notes"), inv["hidden-notes"]) is None
+    assert _release_secret_state(ok, make_state(archived=True), entry) is None
+    assert _release_secret_state(ok, make_state(files=None), entry) is None
+    assert _release_secret_state(ok, make_state(files=frozenset({"README.md"})), entry) is None
+    gone = Gh("ExampleOwner", _routes(contents=404))
+    assert _release_secret_state(gone, make_state(), entry) is None
+    missing = Gh("ExampleOwner", _routes(secret=404))
+    assert _release_secret_state(missing, make_state(), entry) == "missing"
+    for broken in (_routes(contents=500), _routes(secret=403)):
+        with pytest.raises(GhError):
+            _release_secret_state(Gh("ExampleOwner", broken), make_state(), entry)
+
+
+def test_execute_release_secret_needs_a_setter():
+    change = Change("ai-helper", "release-secret", {"name": RELEASE_SECRET}, "set")
+    gh = Gh("ExampleOwner", FakeGithub(helper_repo()), read_only=False)
+    [(_, reason)] = execute([change], gh, None, TOKEN)
+    assert "setter" in reason
