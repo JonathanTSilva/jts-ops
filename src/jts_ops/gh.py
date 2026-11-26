@@ -54,6 +54,19 @@ class GhError(Exception):
         self.status = status
 
 
+def gh_secret_set(owner: str, repo: str, name: str, value: str) -> None:
+    """Set an Actions secret with `gh secret set`, which encrypts it for the repo.
+
+    The value goes on stdin only: never in argv (visible to other processes), a file or output.
+    """
+    args = ["gh", "secret", "set", name, "--repo", f"{owner}/{repo}"]
+    result = subprocess.run(args, input=value, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        message = result.stderr.strip() or f"gh secret set {name} failed"
+        match = _STATUS.search(message)
+        raise GhError(message, int(match.group(1)) if match else None)
+
+
 def _field_args(fields: Mapping[str, Any]) -> list[str]:
     args: list[str] = []
     for key, value in fields.items():

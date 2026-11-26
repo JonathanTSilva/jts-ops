@@ -15,6 +15,13 @@ def _no_real_ignore_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
 
 
 @pytest.fixture(autouse=True)
+def _no_real_release_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Never read the developer's real release-please token."""
+    monkeypatch.delenv("RELEASE_PLEASE_TOKEN", raising=False)
+    monkeypatch.setenv("JTS_RELEASE_TOKEN_FILE", str(tmp_path / "no-release-token"))
+
+
+@pytest.fixture(autouse=True)
 def _cwd_is_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Report and plan paths are confined to the cwd (or _reports); tests write under tmp_path."""
     monkeypatch.chdir(tmp_path)
