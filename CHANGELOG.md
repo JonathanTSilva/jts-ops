@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/JonathanTSilva/jts-ops/compare/v1.1.1...v1.2.0) (2026-11-26)
+
+
+### Features
+
+* **apply:** set RELEASE_PLEASE_TOKEN on repos that release ([#92](https://github.com/JonathanTSilva/jts-ops/issues/92)) ([97fbe1c](https://github.com/JonathanTSilva/jts-ops/commit/97fbe1c8e76cb124413cce713d160d348682da76)), closes [#91](https://github.com/JonathanTSilva/jts-ops/issues/91)
+
 ## [1.1.1](https://github.com/JonathanTSilva/jts-ops/compare/v1.1.0...v1.1.1) (2026-11-24)
 
 
