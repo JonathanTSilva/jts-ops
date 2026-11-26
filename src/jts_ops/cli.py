@@ -1,6 +1,7 @@
 """Command line entry point."""
 
 import argparse
+import base64
 import contextlib
 import datetime
 import json
@@ -11,11 +12,32 @@ from pathlib import Path
 from typing import Any
 
 from jts_ops.adopt import TEMPLATE_REF, AdoptError, adopt_repo
-from jts_ops.apply import RULESET_NAME, execute, plan_changes, ruleset_eligible
+from jts_ops.apply import (
+    CI_WORKFLOW,
+    RELEASE_SECRET,
+    RULESET_NAME,
+    ReleaseSecret,
+    ReleaseTokenError,
+    SecretSetter,
+    ci_passes_release_token,
+    default_release_token_path,
+    execute,
+    load_release_token,
+    plan_changes,
+    ruleset_eligible,
+)
 from jts_ops.audit import Finding, Result, audit_repo, build_report
 from jts_ops.badges import write_badges
 from jts_ops.brand import BrandError, brand_clone
-from jts_ops.gh import Gh, GhError, MissingScopeError, fetch_state, list_repos, printable
+from jts_ops.gh import (
+    Gh,
+    GhError,
+    MissingScopeError,
+    fetch_state,
+    gh_secret_set,
+    list_repos,
+    printable,
+)
 from jts_ops.ideas import run_ideas
 from jts_ops.inventory import InventoryEntry, load_inventory
 from jts_ops.migrate import (
@@ -410,12 +432,50 @@ def _codeql_state(gh: Gh, repo: str) -> str:
     return str(setup.get("state", "not-configured"))
 
 
+def _release_secret_state(
+    gh: Gh, state: RepoState, entry: InventoryEntry | None
+) -> ReleaseSecret | None:
+    """Whether an active repo's ci.yml uses RELEASE_PLEASE_TOKEN and the secret exists.
+
+    None when the repo is not active, has no ci.yml, or no ci.yml job passes the secret to the
+    owner's shared release workflow (see `ci_passes_release_token`).
+    Only the secret's name is read: GitHub never returns a secret value.
+    """
+    if entry is None or entry.profile != "active" or state.archived:
+        return None
+    if state.files is None or CI_WORKFLOW not in state.files:
+        return None
+    base = f"/repos/{gh.owner}/{state.name}"
+    try:
+        ci = gh.api(f"{base}/contents/{CI_WORKFLOW}?ref={state.default_branch}")
+    except GhError as err:
+        if err.status == 404:
+            return None
+        raise
+    text = base64.b64decode(ci.get("content", "")).decode("utf-8", errors="replace")
+    if not ci_passes_release_token(text, gh.owner):
+        return None
+    try:
+        gh.api(f"{base}/actions/secrets/{RELEASE_SECRET}")
+    except GhError as err:
+        if err.status == 404:
+            return "missing"
+        raise
+    return "present"
+
+
 def run_apply(
     args: argparse.Namespace,
     gh: Gh | None = None,
     extra_entries: Sequence[InventoryEntry] = (),
+    set_secret: SecretSetter = gh_secret_set,
 ) -> int:
     """Apply the standard. `extra_entries` stand in for repos not yet in an inventory file."""
+    try:
+        release_token = load_release_token(os.environ, default_release_token_path())
+    except ReleaseTokenError as err:
+        print(f"jts-ops: {err}", file=sys.stderr)
+        return 2
     standard_dir: Path = args.standard_dir or default_standard_dir()
     std = load_standard(standard_dir)
     inventory = load_inventory(standard_dir)
@@ -454,7 +514,16 @@ def run_apply(
                 and not state.private
                 else None
             )
-            changes, skips = plan_changes(state, entry, std, rulesets, codeql)
+            release_secret = _release_secret_state(gh, state, entry)
+            changes, skips = plan_changes(
+                state,
+                entry,
+                std,
+                rulesets,
+                codeql,
+                release_secret=release_secret,
+                release_token=release_token is not None,
+            )
         except GhError as err:
             reason = (err.message.splitlines() or ["unknown error"])[0]
             changes, skips = [], [f"could not read repo state: {reason}"]
@@ -469,7 +538,7 @@ def run_apply(
             print(f"  {skip}" if skip.startswith("extra (kept)") else f"  skip: {skip}")
         total += len(changes)
         if args.execute and changes:
-            for change, reason in execute(changes, gh):
+            for change, reason in execute(changes, gh, set_secret, release_token):
                 failed += 1
                 failed_changes += 1
                 print(f"  FAILED {change.kind}: {printable(reason)}", file=sys.stderr)

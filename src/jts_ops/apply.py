@@ -5,12 +5,17 @@ what would change plus the reasons something was left alone. `execute` performs 
 Nothing here renames, archives, changes visibility or deletes anything.
 """
 
-from collections.abc import Iterable
+import os
+import stat
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any, Literal, cast
 from urllib.parse import quote
 
-from jts_ops.gh import Gh, GhError
+import yaml
+
+from jts_ops.gh import Gh, GhError, ReadOnlyError
 from jts_ops.inventory import InventoryEntry
 from jts_ops.standard import Standard
 from jts_ops.state import LabelInfo, RepoState
@@ -24,10 +29,88 @@ Kind = Literal[
     "codeql-default-setup",
     "security",
     "ruleset",
+    "release-secret",
 ]
 
 CI_WORKFLOW = ".github/workflows/ci.yml"
 RULESET_NAME = "main"
+
+# The Actions secret a repo's ci.yml hands to the shared release workflow. Release PRs opened
+# with it (rather than GITHUB_TOKEN) trigger CI, so the required `ci` check runs on them.
+RELEASE_SECRET = "RELEASE_PLEASE_TOKEN"
+RELEASE_SECRET_EXPR = "${{ secrets." + RELEASE_SECRET + " }}"
+RELEASE_TOKEN_ENV = RELEASE_SECRET
+RELEASE_TOKEN_FILE_ENV = "JTS_RELEASE_TOKEN_FILE"
+RELEASE_TOKEN_FILE = "~/.config/jts-ops/release-please-token"
+# Printed text is written out in full, not built from the names above: CodeQL treats any
+# identifier that looks like a secret as sensitive, and these only name the secret.
+RELEASE_SETUP_HINT = (
+    "RELEASE_PLEASE_TOKEN missing; export RELEASE_PLEASE_TOKEN or put the token in "
+    "~/.config/jts-ops/release-please-token (chmod 600), then re-run with --execute"
+)
+RELEASE_SETUP_REASON = "set RELEASE_PLEASE_TOKEN (ci.yml runs release-please)"
+
+ReleaseSecret = Literal["present", "missing"]
+SecretSetter = Callable[[str, str, str, str], None]  # (owner, repo, name, value)
+
+
+class ReleaseTokenError(Exception):
+    """The release-please token file exists but is unsafe to read."""
+
+
+def default_release_token_path() -> Path:
+    """`$JTS_RELEASE_TOKEN_FILE`, else `~/.config/jts-ops/release-please-token`."""
+    return Path(os.environ.get(RELEASE_TOKEN_FILE_ENV) or RELEASE_TOKEN_FILE).expanduser()
+
+
+def load_release_token(environ: Mapping[str, str], path: Path) -> str | None:
+    """The token from `$RELEASE_PLEASE_TOKEN`, else from `path`; None when neither has one.
+
+    The file is refused when its group or others can access it, like an SSH key.
+    """
+    from_env = environ.get(RELEASE_TOKEN_ENV, "").strip()
+    if from_env:
+        return from_env
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError:
+        return None
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise ReleaseTokenError(f"{path} is readable by others; run: chmod 600 {path}")
+    return path.read_text(encoding="utf-8").strip() or None
+
+
+def ci_passes_release_token(ci_text: str, owner: str) -> bool:
+    """True when a ci.yml job calls the owner's shared release workflow with the secret.
+
+    Only that exact shape counts: a comment, an unrelated job or another workflow that names
+    the secret does not, so `apply` never hands the token to a repo for some other use.
+    """
+    try:
+        data: Any = yaml.safe_load(ci_text)
+    except yaml.YAMLError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    jobs: Any = cast("dict[str, Any]", data).get("jobs")
+    if not isinstance(jobs, dict):
+        return False
+    workflow = f"{owner}/.github/.github/workflows/release.yml@"
+    for job in cast("dict[str, Any]", jobs).values():
+        if not isinstance(job, dict):
+            continue
+        fields = cast("dict[str, Any]", job)
+        uses: Any = fields.get("uses")
+        secrets: Any = fields.get("secrets")
+        if (
+            isinstance(uses, str)
+            and uses.startswith(workflow)
+            and isinstance(secrets, dict)
+            and cast("dict[str, Any]", secrets).get("token") == RELEASE_SECRET_EXPR
+        ):
+            return True
+    return False
+
 
 ACTIVE_SETTINGS: dict[str, Any] = {
     "allow_squash_merge": True,
@@ -197,11 +280,16 @@ def plan_changes(
     std: Standard,
     existing_rulesets: list[dict[str, Any]] | None = None,
     codeql_state: str | None = None,
+    release_secret: ReleaseSecret | None = None,
+    release_token: bool = False,
 ) -> tuple[list[Change], list[str]]:
     """Return (changes, skip reasons) for one repo. Pure: makes no API calls.
 
     `codeql_state` is the repo's current default-setup state: "configured", "not-configured",
     "unavailable" (unsupported or no languages), or None when it was not read.
+    `release_secret` says whether the repo's ci.yml needs `RELEASE_PLEASE_TOKEN` and has it:
+    "present", "missing", or None when ci.yml does not use it (or it was not read).
+    `release_token` is whether a token value is available to set it with.
     """
     name = state.name
     if state.archived:
@@ -326,6 +414,20 @@ def plan_changes(
                     f"update ruleset {RULESET_NAME} to the standard rules",
                 )
             )
+
+    # Release-please token: only added when missing; an existing value is never replaced.
+    if profile == "active" and release_secret == "missing":
+        if release_token:
+            changes.append(
+                Change(
+                    name,
+                    "release-secret",
+                    {"name": RELEASE_SECRET},
+                    RELEASE_SETUP_REASON,
+                )
+            )
+        else:
+            skips.append(RELEASE_SETUP_HINT)
     return changes, skips
 
 
@@ -333,9 +435,20 @@ def _repo_path(gh: Gh, change: Change, suffix: str = "") -> str:
     return f"/repos/{gh.owner}/{change.repo}{suffix}"
 
 
-def _apply_one(change: Change, gh: Gh) -> None:
+def _apply_one(
+    change: Change, gh: Gh, set_secret: SecretSetter | None, release_token: str | None
+) -> None:
     payload = change.payload
     match change.kind:
+        case "release-secret":
+            # Not an API call, so Gh's own dry-run guard does not see it: check it here.
+            if gh.read_only:
+                raise ReadOnlyError(f"refusing to set {payload['name']}: read-only mode")
+            if not release_token:
+                raise ValueError(f"no release-please token to set {payload['name']} with")
+            if set_secret is None:
+                raise ValueError("internal: no secret setter")
+            set_secret(gh.owner, change.repo, payload["name"], release_token)
         case "settings" | "description":
             gh.api(_repo_path(gh, change), "PATCH", body=payload)
         case "topics":
@@ -370,15 +483,21 @@ def _apply_one(change: Change, gh: Gh) -> None:
                 )
 
 
-def execute(changes: list[Change], gh: Gh) -> list[tuple[Change, str]]:
+def execute(
+    changes: list[Change],
+    gh: Gh,
+    set_secret: SecretSetter | None = None,
+    release_token: str | None = None,
+) -> list[tuple[Change, str]]:
     """Apply every change; a failing change is recorded and the rest still run.
 
+    `set_secret` and `release_token` are only used by "release-secret" changes.
     Returns the failures as (change, first line of the error).
     """
     failures: list[tuple[Change, str]] = []
     for change in changes:
         try:
-            _apply_one(change, gh)
+            _apply_one(change, gh, set_secret, release_token)
         except (GhError, ValueError, OSError) as err:
             message = err.message if isinstance(err, GhError) else str(err)
             failures.append((change, (message.splitlines() or ["unknown error"])[0]))
