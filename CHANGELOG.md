@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/JonathanTSilva/jts-ops/compare/v1.2.0...v1.3.0) (2026-11-27)
+
+
+### Features
+
+* **audit:** warn when a live public repo lacks .bestpractices.json ([#90](https://github.com/JonathanTSilva/jts-ops/issues/90)) ([05fd487](https://github.com/JonathanTSilva/jts-ops/commit/05fd4879e9807add49a2124d235f5d0cd93acf65))
+
 ## [1.2.0](https://github.com/JonathanTSilva/jts-ops/compare/v1.1.1...v1.2.0) (2026-11-26)
 
 
