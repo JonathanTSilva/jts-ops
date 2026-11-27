@@ -12,6 +12,7 @@
 [![Coverage](https://codecov.io/gh/JonathanTSilva/jts-ops/graph/badge.svg)](https://codecov.io/gh/JonathanTSilva/jts-ops)
 [![Quality](https://sonarcloud.io/api/project_badges/measure?project=JonathanTSilva_jts-ops&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=JonathanTSilva_jts-ops)
 [![Scorecard](https://img.shields.io/ossf-scorecard/github.com/JonathanTSilva/jts-ops?style=flat-square&label=scorecard)](https://scorecard.dev/viewer/?uri=github.com/JonathanTSilva/jts-ops)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/17179/badge)](https://www.bestpractices.dev/projects/17179)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Codespaces](https://img.shields.io/badge/codespaces-open-181717?style=flat-square&logo=github)](https://codespaces.new/JonathanTSilva/jts-ops)
 <!-- badges:end -->
